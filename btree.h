@@ -3,8 +3,6 @@
 
 #include "btnode.h"
 
-typedef unsigned long long key_t;
-
 class btree {
 
 	private:
@@ -13,27 +11,24 @@ class btree {
 
 		int _max_children;
 	
-	protected:
+		void _do_split(btnode* node);
+
+		void _do_insert(const bkey_t, const value_t, btnode *);
+
+		void _do_print(btnode*) const;
 	
-		int _height(void);
-
-		void _create(void);
-
-		bool _search(key_t key);
-
-		void _insert(btnode&);
-
-		void _splitnode(bnode&);
-
-		int _median(btnode&);
-
-		void _delete(key_t key);
-
-		void _merge(btnode&);
+		btnode* _find_leaf(const bkey_t key, btnode* nodep);
 
 	public:
+		
+		void _insert(const bkey_t, const value_t);
+
+		void _print() const;
+
+		void _destroy(btnode*);
 
 		btree(int);
+
 	       ~btree();
 };
 #endif

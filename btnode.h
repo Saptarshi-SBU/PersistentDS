@@ -32,17 +32,17 @@ class btnode {
 
 		btnode* _parent;
 
-		int _num_keys;
-
 		int _level;
 
-		key_t _max, _min;
+		int _refcnt;
 
 	protected:
 
 	public:
 
-		int _insert(const bkey_t, const value_t);
+		void _insert_key(const bkey_t, const value_t);
+
+		void _insert_child(btnode*);
 
 		int _findpos(const bkey_t) const;
 
@@ -52,10 +52,30 @@ class btnode {
 
 		value_t _index(int) const;
 
+		element_t _keysAt(int) const;
+
+		btnode* _childAt(int);
+
+		btnode* _parentp(void) const;
+
+		void _set_parentp(btnode *);
+
+		void _unset_parentp(void);
+
+		int _unset_child(btnode *);
+
+		int _num_keys(void) const;
+
+		int _num_child(void) const;
+
+		int _num_level(void) const;
+
 		void _print(void) const;
 
 		btnode(btnode*, int, int);
 
 	       ~btnode();
+
+		bkey_t _max, _min;
 };
 #endif
