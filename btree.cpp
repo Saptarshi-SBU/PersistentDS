@@ -71,6 +71,13 @@ void btree::_do_split(btnode* node) {
 
 	TRACE_FUNC(__func__);
 
+	cout << "split node refcnt " << node->_refcnt << " num child " << node->_num_child() << endl;
+	
+	if (NULL == parentp)
+		cout << "no parentp " << endl; 
+	else
+		cout << "parent node refcnt " << parentp->_refcnt << " num child " << parentp->_num_child() << " max " << parentp->_max << " min " << parentp->_min << endl;
+		
 	if (NULL == parentp)
 		parentp = new btnode(NULL, node->_num_level() - 1, _max_children);
 	else
@@ -105,9 +112,9 @@ void btree::_do_split(btnode* node) {
 
 	parentp->_insert_key(q.first, q.second);
 
-	parentp->_insert_child(lchildp);
+//	parentp->_insert_child(lchildp);
 
-	parentp->_insert_child(rchildp);
+//	parentp->_insert_child(rchildp);
 
 	if (_rootp == node)
 		_rootp = parentp;

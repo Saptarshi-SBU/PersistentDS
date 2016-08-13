@@ -19,7 +19,7 @@ int main(void) {
 	value_t v = node->_index(pos);
 	cout << "Value " << v._off << endl;
 	cout << "Keys Size " << node->_num_keys() << endl;
-	for (int i = 0;i < 10; i++)
+	for (int i = 0;i < 100; i++)
 		cout << node->_delete(100 + i) << endl;
 	node->_print();
 	delete node;
@@ -27,7 +27,7 @@ int main(void) {
 
 #if _TEST_TREE_
 	btree* bt = new btree(3);
-	for (int i = 0;i < 50; i++)
+	for (int i = 0;i < 250; i++)
 		bt->_insert(100 + i, value_t(NULL, 1000));
 	cout << "################## Printing Tree #####################" << endl;
 	bt->_print();

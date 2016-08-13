@@ -6,14 +6,17 @@
 
 btnode::btnode(btnode* parent, int level, int keys) : _level(level), _parent(parent) { 
 	_refcnt = 1; 
-	if (NULL != parent)
-		parent->_refcnt++;
+	if (NULL != parent) {
+		parent->_child.push_back(this);
+	       _set_parentp(parent);
+		sort(parent->_child.begin(), parent->_child.end(), [] (const btnode* p, const btnode* q) { return (p->_max < q->_max);} );
+	}
 }
 
 btnode::~btnode() {
-	cout << __func__ << " min : " << _min << " max : " << _max << endl;
+	cout << __func__ << " min : " << _min << " max : " << _max << " num keys " << _num_keys() << " num child " << _num_child() << endl;
 	--_refcnt;
-//	assert(_refcnt == 0);
+	assert(_refcnt == 0);
 	_parent = NULL;
 	_keys.clear();
 	_child.clear();
@@ -23,6 +26,7 @@ void btnode::_set_parentp(btnode* node) {
 
 	_parent = node;
 	_parent->_refcnt++;
+	_refcnt++;
 }
 
 void btnode::_unset_parentp(void) {
@@ -31,6 +35,7 @@ void btnode::_unset_parentp(void) {
 		return;
 	_parent->_refcnt--;
 	_parent = NULL;
+	_refcnt--;
 }
 
 void btnode::_insert_key(const bkey_t key, const value_t p) {
@@ -45,8 +50,6 @@ void btnode::_insert_key(const bkey_t key, const value_t p) {
 }
 
 void btnode::_insert_child(btnode *node) {
-
-	//node->_refcnt++;
 
 	_child.push_back(node);
 
@@ -78,8 +81,7 @@ int btnode::_unset_child(btnode* node) {
 
 	if (n > 0)
 		_child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
-	node->_refcnt--;
-	_refcnt--;
+	node->_unset_parentp();
 	cout << __func__ << " " << node->_refcnt << endl;
 	//	_child.erase(std::remove_if(_child.begin(), _child.end(), [node] (const btnode* p) { return p == node; }), _child.end());
 	return (n > _child.size()) ? 0 : -1;

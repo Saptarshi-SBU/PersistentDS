@@ -34,12 +34,12 @@ class btnode {
 
 		int _level;
 
-		int _refcnt;
 
 	protected:
 
 	public:
 
+		int _refcnt;
 		void _insert_key(const bkey_t, const value_t);
 
 		void _insert_child(btnode*);
