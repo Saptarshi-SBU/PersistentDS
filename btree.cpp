@@ -4,92 +4,66 @@
 
 using namespace std;
 
-#define TRACE_FUNC(str) cout  << endl << str << " : "
+#define TRACE_FUNC(str) cout  << endl << str <<  endl
+
+#define DEBUG 1
 
 btree::btree(int max) : _max_children(max) {
 
 	try {
-		_rootp = new btnode(NULL, 0, _max_children);
+		_rootp = shared_ptr<btnode> (new btnode());
 	} catch (exception& ex) {
-		cout << ex.what() << endl;
 		throw ex;
 	}
 }
 
 btree::~btree() {
 
-	if (_rootp != NULL) {
-		_destroy(_rootp);
-		_rootp = NULL;
-	}
+	_destroy(_rootp);
 }
 
-void btree::_destroy(btnode* node) {
+void btree::_destroy(shared_ptr<btnode> node) {
 
-	if (node == NULL)
-		return;
-
-	for (auto i = 0; i < node->_num_child(); i++)
+	for (auto i = 0; i < node->_num_child(); i++) {
+		 node->_childAt(i).reset();
 		_destroy(node->_childAt(i));
+	}
+
+	node->_reset_parentp();
+	node.reset();
 }
 
-btnode* btree::_find_leaf(const bkey_t key, btnode* nodep) {
+shared_ptr<btnode> btree::_locate_leaf(const bkey_t key, shared_ptr<btnode>& node) {
 
-	btnode* rnode = NULL;	
+	shared_ptr<btnode> rnode;	
 
-	if (nodep == NULL)
-		return NULL;
+	if (!node)
+		return shared_ptr<btnode>();
 
-	TRACE_FUNC(__func__);
+	if (!(node->_num_child()))	
+		return node;
 
-	cout << "keys : " << nodep->_num_keys() << "\tchilds : " << nodep->_num_child() << " min : " << nodep->_min << " max : " << nodep->_max << endl;
-
-	if (0 == nodep->_num_child())	
-		return nodep;
-
-	int i  = 0;
-	for (i = 0; i < nodep->_num_keys(); i++) {
-		auto p = nodep->_keysAt(i);
-		if (key > p.first)
+	for (int i = 0; i < node->_num_child(); i++) {
+		rnode = node->_childAt(i);
+		if (key > rnode->_max)
 			continue;
-		rnode = nodep->_childAt(i);
 		break;
 	}
 
-	if (NULL == rnode)
-		rnode = nodep->_childAt(i);
-
-
-	return _find_leaf(key, rnode);
+	return _locate_leaf(key, rnode);
 }
 
-void btree::_do_split(btnode* node) {
+void btree::_do_split(shared_ptr<btnode>& node) {
 
-	assert((NULL != node) && (node->_num_keys() >= _max_children));
+	assert((node) && (node->_num_keys() >= _max_children));
 
-	btnode* parentp = node->_parentp();
-
-	TRACE_FUNC(__func__);
-
-	cout << "split node refcnt " << node->_refcnt << " num child " << node->_num_child() << endl;
-	
-	if (NULL == parentp)
-		cout << "no parentp " << endl; 
-	else
-		cout << "parent node refcnt " << parentp->_refcnt << " num child " << parentp->_num_child() << " max " << parentp->_max << " min " << parentp->_min << endl;
-		
-	if (NULL == parentp)
-		parentp = new btnode(NULL, node->_num_level() - 1, _max_children);
-	else
-		cout << "delete child " << parentp->_unset_child(node) << endl;
-
-	btnode* lchildp = new btnode(parentp, node->_num_level(), _max_children);
-
-	btnode* rchildp = new btnode(parentp, node->_num_level(), _max_children);
-
-	int  p = node->_separator();
+	auto p = node->_separator();
 
 	auto q = node->_keysAt(p);
+
+	auto lchildp = shared_ptr<btnode> (new btnode());
+
+	auto rchildp = shared_ptr<btnode> (new btnode());
 
 	for (int i = 0; i < p; i++)
 		lchildp->_insert_key(node->_keysAt(i).first, node->_keysAt(i).second);
@@ -100,47 +74,68 @@ void btree::_do_split(btnode* node) {
 	if (node->_num_child()) {
 
 		for (int i = 0; i <= p; i++) {
-			assert(node->_childAt(i) != NULL);
-			lchildp->_insert_child(node->_childAt(i));
+			auto r = node->_childAt(i);
+			assert(r);
+			lchildp->_insert_child(r);
+			r->_set_parentp(lchildp);
 		}
 
 		for (int i = p + 1; i < node->_num_child(); i++) {
-			assert(node->_childAt(i) != NULL);
-			rchildp->_insert_child(node->_childAt(i));
+			auto r = node->_childAt(i);
+			assert(r);
+			rchildp->_insert_child(r);
+			r->_set_parentp(rchildp);
 		}
+	}
+
+	auto parentp = node->_parentp();
+
+	if (!parentp) {
+		parentp = shared_ptr<btnode> (new btnode()); 
+		parentp->_set_level(node->_get_level() - 1);
 	}
 
 	parentp->_insert_key(q.first, q.second);
 
-//	parentp->_insert_child(lchildp);
+	parentp->_remove_child(node);
 
-//	parentp->_insert_child(rchildp);
+	parentp->_insert_child(lchildp);
+
+	parentp->_insert_child(rchildp);
+
+	// Note No calls to unset parent required here
+	
+	lchildp->_set_parentp(parentp);
+
+	rchildp->_set_parentp(parentp);
+
+	lchildp->_set_level(node->_get_level());
+
+	rchildp->_set_level(node->_get_level());
 
 	if (_rootp == node)
 		_rootp = parentp;
 
-
-	delete node;
-
-	cout << "parent info " << parentp->_num_keys() << "\t" << parentp->_num_child() << endl;
-
-	_do_print(parentp);
-
 	if (parentp->_num_keys() >= _max_children)
 		_do_split(parentp);
+
+	#if DEBUG
+	cout << "btnode ref count " << node.use_count() << endl;
+	#endif
+
+	node.reset();
 }
 
-void btree::_do_insert(const bkey_t key, value_t val, btnode* node) {
-
-	if (node == NULL)
-		return;
+void btree::_do_insert(const bkey_t key, value_t val, shared_ptr<btnode>& node) {
 
 	TRACE_FUNC(__func__);
 
-	cout << "key :" << key << endl;
+	if (!node)
+		return;
 
-	btnode* rnode = _find_leaf(key, node);
-	assert (NULL != rnode);
+	auto rnode = _locate_leaf(key, node);
+
+	assert (rnode);
 
 	rnode->_insert_key(key, val);
 
@@ -153,16 +148,26 @@ void btree::_insert(const bkey_t key, const value_t val) {
 	_do_insert(key, val, _rootp);	
 }
 
-void btree::_do_print(btnode* node) const {
-
-	if (node == NULL)
-		return;
+void btree::_do_print(const shared_ptr<btnode>& node) const {
 
 	TRACE_FUNC(__func__);
 
-	for (auto i = 0; i < node->_num_child(); i++) 
-		_do_print(node->_childAt(i));
+	if (!node)
+		return;
 
+	int num_c = node->_num_child();
+	int num_k = node->_num_keys();
+
+	if (!num_c) {
+		for (auto i = 0; i < num_k; i++)
+		 	cout << "btkey : " << node->_keysAt(i).first << endl;
+	} else {
+		for (auto i = 0; i < num_c; i++) {
+			_do_print(node->_childAt(i));
+		 	if (i < num_k)
+		 		cout << "btkey : " << node->_keysAt(i).first << endl;
+		}
+	}
 	node->_print();
 }
 

@@ -3,8 +3,14 @@
 
 #include <vector>
 #include <utility>
+#include <memory>
 
 using namespace std;
+
+#define FUNC                __func__
+#define KEY_LIMITS(X, Y)   "key_limits<" << X << "," << Y << ">" << " "
+#define ENTRY_LIMITS(X, Y) "entry_limits<" << X << "," << Y << ">" << " "
+#define LEVEL(X)           "level<" << X << ">" << " "
 
 typedef unsigned long long bkey_t;
 
@@ -22,47 +28,51 @@ typedef struct value_t value_t;
 
 typedef pair<bkey_t, value_t> element_t;
 		
-class btnode {
+class btnode : public enable_shared_from_this<btnode> {
 
 	private:
 
 		vector<element_t> _keys;
 
-		vector<btnode*> _child;
+		vector<shared_ptr<btnode>> _child;
 
-		btnode* _parent;
+		shared_ptr<btnode> _parent;
 
 		int _level;
-
 
 	protected:
 
 	public:
 
-		int _refcnt;
+		bkey_t _max, _min;
+
+		btnode();
+
+	       ~btnode();
+
 		void _insert_key(const bkey_t, const value_t);
 
-		void _insert_child(btnode*);
+		int _find_key(const bkey_t) const;
 
-		int _findpos(const bkey_t) const;
+		void _remove_key(const bkey_t);
 
-		int _delete(bkey_t);
+		void _insert_child(shared_ptr<btnode>);
+
+		int _find_child(shared_ptr<btnode>&) const;
+
+		void _remove_child(shared_ptr<btnode>&);
 
 		int _separator(void) const;
 
-		value_t _index(int) const;
-
 		element_t _keysAt(int) const;
 
-		btnode* _childAt(int);
+		shared_ptr<btnode> _childAt(int);
 
-		btnode* _parentp(void) const;
+		shared_ptr<btnode> _parentp(void) const;
 
-		void _set_parentp(btnode *);
+		void _set_parentp(shared_ptr<btnode>);
 
-		void _unset_parentp(void);
-
-		int _unset_child(btnode *);
+		void _reset_parentp(void);
 
 		int _num_keys(void) const;
 
@@ -70,12 +80,12 @@ class btnode {
 
 		int _num_level(void) const;
 
+		void _set_level(int);
+
+		int _get_level(void) const;
+
 		void _print(void) const;
 
-		btnode(btnode*, int, int);
 
-	       ~btnode();
-
-		bkey_t _max, _min;
 };
 #endif
