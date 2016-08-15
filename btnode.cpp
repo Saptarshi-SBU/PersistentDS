@@ -119,7 +119,7 @@ int btnode::_find_child(shared_ptr<btnode>& node) const {
  *  B-Tree node remove ptr operation
  * 
  */
-void btnode::_remove_child(shared_ptr<btnode>& node) {
+void btnode::_remove_child(shared_ptr<btnode> node) {
 	 LOG << FUNC << endl;
 	_child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
 	 node->_reset_parentp();

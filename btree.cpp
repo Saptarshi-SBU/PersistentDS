@@ -1,3 +1,13 @@
+/*--------------------------------------------------------------------------------
+ *   B-Tree Properties
+ *	- Every node has at most m children.
+ *	- Every non-leaf node (except root) has at least ⌈m/2⌉ children.
+ *	- The root has at least two children if it is not a leaf node.
+ *	- A non-leaf node with k children contains k−1 keys.
+ *	- All leaves appear in the same level
+ *---------------------------------------------------------------------------------*/
+
+
 #include <iostream>
 #include <cassert>
 #include "btree.h"
@@ -147,7 +157,283 @@ void btree::_insert(const bkey_t key, const value_t val) {
 
 	_do_insert(key, val, _rootp);	
 }
+/*
+ *  B-Tree Merge nodes operation 
+ *
+ */
+shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btnode>& left, shared_ptr<btnode>& right) {
 
+	//Sanity Check that we have no siblings to avoid merge
+	
+	assert(left && (left->_num_keys() <= _max_children/2));
+
+	assert(right && (right->_num_keys() <= _max_children/2));
+
+	assert(parentp && parentp->_num_child());
+
+	auto merge_node  = shared_ptr<btnode> (new btnode());
+
+	auto merge_level = left->_get_level();
+	
+	merge_node->_set_level(merge_level);
+
+	for (int i = 0; i < parentp->_num_child(); i++) {
+		if (parentp->_childAt(i) == right) {
+			parentp->_remove_key(parentp->_keysAt(i - 1).first);
+			merge_node->_insert_key(parentp->_keysAt(i - 1).first, parentp->_keysAt(i - 1).second);
+			break;
+		}	
+	}
+
+	for (int i = 0; i < left->_num_keys(); i++)
+		merge_node->_insert_key(left->_keysAt(i).first, left->_keysAt(i).second);
+	
+	for (int i = 0; i < right->_num_keys(); i++)
+		merge_node->_insert_key(right->_keysAt(i).first, right->_keysAt(i).second);
+
+	for (int i = 0; i < left->_num_child(); i++) {
+		auto r = left->_childAt(i);
+		assert(r);
+		merge_node->_insert_child(r);
+		r->_set_parentp(merge_node);
+	}
+
+	for (int i = 0; i < right->_num_child(); i++) {
+		auto r = right->_childAt(i);
+		assert(r);
+		merge_node->_insert_child(r);
+		r->_set_parentp(merge_node);
+	}
+	
+	parentp->_remove_child(left);
+
+	parentp->_remove_child(right);
+
+	parentp->_insert_child(merge_node);
+
+	merge_node->_set_parentp(parentp);
+
+	left.reset();
+
+	right.reset();
+
+	return parentp;
+}
+
+bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, shared_ptr<btnode>& rnode) {
+
+	if (node->_num_keys() >= _max_children/2)
+		return false;
+
+	auto parentp = node->_parentp();
+
+	for (int i = 0; i < parentp->_num_child(); i++) {
+		if (parentp->_childAt(i)->_min > node->_max) {
+			rnode = parentp->_childAt(i);
+			break;
+		}
+	}
+		
+	for (int i = 0; i < parentp->_num_child(); i++) {
+		if (parentp->_childAt(i)->_max < node->_min) {
+			pnode = parentp->_childAt(i);
+			break;
+		}
+	}
+
+	// Test Left Sibling
+	if (pnode && (pnode->_num_keys() > _max_children/2))
+		return false;
+
+	// Test Right Sibling
+	if (rnode && (pnode->_num_keys() > _max_children/2))
+		return false;
+
+	return true;
+}
+/*@
+ *  This assumes both the left and right child are leaf nodes
+ *
+ */
+void btree::_do_right_rotation(shared_ptr<btnode>& left, shared_ptr<btnode>& right, shared_ptr<btnode>& node) {
+
+	assert(right);
+
+	assert (right->_num_keys() < _max_children/2);
+
+	element_t pkey, lkey;
+
+	for (int i = 0; i < node->_num_keys(); i++) {
+		if (node->_keysAt(i).first < right->_min)
+			pkey = node->_keysAt(i);
+		else
+			break;
+	}
+
+	node->_remove_key(pkey.first);
+
+	right->_insert_key(pkey.first, pkey.second);
+
+	// in-order predecessor in left child to parent node for RL-rotation
+	 
+	int i = left->_find_key(left->_max);
+
+	lkey = left->_keysAt(i);
+
+	left->_remove_key(lkey.first);
+
+	node->_insert_key(lkey.first, lkey.second);
+
+	auto pchild = left->_childAt(i + 1);
+
+	right->_insert_child(pchild);
+
+	left->_remove_child(pchild);
+
+}
+
+void btree::_do_left_rotation(shared_ptr<btnode>& left, shared_ptr<btnode>& right, shared_ptr<btnode>& node) {
+
+	assert(left);
+
+	assert(left->_num_keys() < _max_children/2);
+
+	element_t pkey, rkey;
+
+	for (int i = 0; i < node->_num_keys(); i++) {
+		if (node->_keysAt(i).first > left->_max)
+			pkey = node->_keysAt(i);
+		else
+			break;
+	}
+
+	node->_remove_key(pkey.first);
+
+	left->_insert_key(pkey.first, pkey.second);
+
+	// Pick From Edges
+	
+	int i = right->_find_key(right->_min);
+
+	rkey = right->_keysAt(i);
+
+	right->_remove_key(rkey.first);
+
+	node->_insert_key(rkey.first, rkey.second);
+
+	left->_insert_child(right->_childAt(0));
+
+	right->_remove_child(right->_childAt(0));
+}
+
+
+shared_ptr<btnode> btree::_do_lookup(const bkey_t key, shared_ptr<btnode> node) {
+
+	TRACE_FUNC(__func__);
+
+	assert (node);
+	
+	for (int i = 0; i < node->_num_keys(); i++)
+		if (key == node->_keysAt(i).first)
+			return node;
+
+	for (int i = 0; i < node->_num_child(); i++) {
+		auto rnode = node->_childAt(i);
+		if ((key >= rnode->_min) && (key <= rnode->_max))
+			return _do_lookup(key, rnode);
+	}
+
+	return nullptr;
+}
+
+shared_ptr<btnode> btree::_lookup(const bkey_t key) {
+
+	TRACE_FUNC(__func__);
+
+	return _do_lookup(key, _rootp);
+}
+
+/*
+ *  This function drives the B-Tree Delete State Machine
+ *
+ */
+bool btree::_test_valid_leaf(shared_ptr<btnode> node) {
+	return ((node->_num_child() == 0) && node->_num_keys()) ? true : false;
+} 
+
+bool btree::_test_valid_non_leaf(shared_ptr<btnode> node) {
+	return (node->_num_child() >= _max_children/2) ? true : false;
+} 
+
+void btree::_delete(const bkey_t key) {
+
+	TRACE_FUNC(__func__);
+
+	auto p = _lookup(key);
+	if (!p)
+		return;
+
+	auto node = _inorder_predecessor(key);
+
+	assert(node->_num_child() == 0);
+
+	int i_max = node->_num_keys() - 1;
+
+	auto val  = node->_keysAt(i_max);
+
+	assert(val.first == node->_max);
+
+	//replace
+	
+	p->_remove_key(key);
+
+	p->_insert_key(val.first, val.second);
+
+	node->_remove_key(val.first);
+
+	do {
+		shared_ptr<btnode> parentp = node->_parentp();
+
+		shared_ptr<btnode> pnode = nullptr;
+
+		shared_ptr<btnode> nnode = nullptr; 
+
+		if (_test_merge(node, pnode, nnode))
+			node =_do_merge(node, pnode, nnode);
+		else
+		if (pnode->_num_keys() >= _max_children/2)
+			_do_right_rotation(pnode, nnode, node);
+		else
+		if (nnode->_num_keys() >= _max_children/2)
+			_do_left_rotation(pnode, nnode, node);
+
+	} while (!_test_valid_leaf(node) || !(_test_valid_non_leaf(node)));
+
+	if ((node == _rootp) && (0 == node->_num_keys())) {
+		_rootp = node->_childAt(0);
+		 node.reset();
+	}
+}
+
+shared_ptr<btnode> btree::_inorder_predecessor(const bkey_t key) {
+
+	TRACE_FUNC(__func__);
+
+	auto node = _do_lookup(key, _rootp);
+	if (node->_num_child() == 0)
+		return node;
+
+	int i  = node->_find_key(key);
+	auto p = node->_childAt(i);
+
+	do {
+		int i_max = p->_num_child() - 1;
+		p = p->_childAt(i_max);
+	} while (p->_num_child());
+
+	return p;
+}
+		
 void btree::_do_print(const shared_ptr<btnode>& node) const {
 
 	TRACE_FUNC(__func__);

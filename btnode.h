@@ -21,6 +21,8 @@ struct value_t {
 
 		value_t(void* base, unsigned long long offset) : _base(base), _off(offset) { }
 
+		value_t() { }
+
 	       ~value_t() { }
 };
 
@@ -60,7 +62,7 @@ class btnode : public enable_shared_from_this<btnode> {
 
 		int _find_child(shared_ptr<btnode>&) const;
 
-		void _remove_child(shared_ptr<btnode>&);
+		void _remove_child(shared_ptr<btnode>);
 
 		int _separator(void) const;
 
