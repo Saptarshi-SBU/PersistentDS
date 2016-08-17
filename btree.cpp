@@ -365,33 +365,50 @@ bool btree::_test_valid_non_leaf(shared_ptr<btnode> node) {
 	return (node->_num_child() >= _max_children/2) ? true : false;
 } 
 
+/*
+ * B-Tree Delete is a recursive operation, which propagates towards the root
+ * This may involve the following operations
+ *    - Inorder Predecessor Finding
+ *    - Swapping Keys
+ *    - Merging Nodes in case B-Tree Property is violated
+ *    - Rotation in case B-Tree Property is violated
+ */     
 void btree::_delete(const bkey_t key) {
 
 	TRACE_FUNC(__func__);
 
-	auto p = _lookup(key);
-	if (!p)
+	auto curr = _lookup(key);
+	if (!curr)
 		return;
 
-	auto node = _inorder_predecessor(key);
+	auto pprev = _inorder_predecessor(key);
 
-	assert(node->_num_child() == 0);
+	assert(pprev->_num_child() == 0);
 
-	int i_max = node->_num_keys() - 1;
+	if (curr != pprev) {
 
-	auto val  = node->_keysAt(i_max);
+		// right-most key
+		int rpos = pprev->_num_keys() - 1;
 
-	assert(val.first == node->_max);
+		auto val = pprev->_keysAt(rpos);
 
-	//replace
+		assert(val.first == pprev->_max);
+
+		//replace
 	
-	p->_remove_key(key);
+		curr->_remove_key(key);
 
-	p->_insert_key(val.first, val.second);
+		curr->_insert_key(val.first, val.second);
 
-	node->_remove_key(val.first);
+		pprev->_remove_key(val.first);
+	
+	} else 
+		curr->_remove_key(key);
 
-	do {
+	auto node = pprev;
+
+	while (!_test_valid_leaf(node) || !(_test_valid_non_leaf(node))) {
+
 		shared_ptr<btnode> parentp = node->_parentp();
 
 		shared_ptr<btnode> pnode = nullptr;
@@ -406,32 +423,41 @@ void btree::_delete(const bkey_t key) {
 		else
 		if (nnode->_num_keys() >= _max_children/2)
 			_do_left_rotation(pnode, nnode, node);
+	}
 
-	} while (!_test_valid_leaf(node) || !(_test_valid_non_leaf(node)));
-
+	// In case re-balancing propagated to Root
 	if ((node == _rootp) && (0 == node->_num_keys())) {
 		_rootp = node->_childAt(0);
 		 node.reset();
 	}
 }
 
+/*
+ * Note for leaf btree-node, we do not do any predecessor search
+ * This is done only for the internal nodes
+ *
+ */
 shared_ptr<btnode> btree::_inorder_predecessor(const bkey_t key) {
 
 	TRACE_FUNC(__func__);
 
 	auto node = _do_lookup(key, _rootp);
-	if (node->_num_child() == 0)
+	if (!node)
+	     // Sanity	
+		return nullptr;
+	     // Leaf node
+	else if (0 == node->_num_child())	
 		return node;
+	     // Non-Leaf node
+	else {
+		int  index = node->_find_key(key);
+		// in-order sibling
+		auto child = node->_childAt(index);
 
-	int i  = node->_find_key(key);
-	auto p = node->_childAt(i);
-
-	do {
-		int i_max = p->_num_child() - 1;
-		p = p->_childAt(i_max);
-	} while (p->_num_child());
-
-	return p;
+		while(index = child->_num_child())	
+			child = child->_childAt(index - 1);
+		return child;
+	}
 }
 		
 void btree::_do_print(const shared_ptr<btnode>& node) const {
