@@ -30,6 +30,8 @@ class btree {
 		shared_ptr<btnode> _inorder_predecessor(const bkey_t key);
 
 		void _do_print(const shared_ptr<btnode>&) const;
+
+		void _do_level_traversal(const shared_ptr<btnode>& node) const;
 	
 		shared_ptr<btnode> _locate_leaf(const bkey_t key, shared_ptr<btnode>&);
 

@@ -30,6 +30,8 @@ int main(void) {
 		bt->_insert(100 + i, value_t(NULL, 1000));
 	cout << "################## Printing Tree #####################" << endl;
 	bt->_print();
+	bt->_delete(227);
+	bt->_print();
  	delete bt;
 #endif
 	return 0;

@@ -10,6 +10,7 @@
 
 #include <iostream>
 #include <cassert>
+#include <queue>
 #include "btree.h"
 
 using namespace std;
@@ -483,7 +484,55 @@ void btree::_do_print(const shared_ptr<btnode>& node) const {
 	node->_print();
 }
 
+void btree::_do_level_traversal(const shared_ptr<btnode>& node) const {
+
+	if (!node)
+		return;
+
+	queue<shared_ptr<btnode>> q1, q2;
+	shared_ptr<btnode> p;
+	int n1, n2;
+
+	q1.push(node);	
+
+	while (q1.size() || q2.size()) {
+
+		n1 = n2 = 0;
+
+		while (q1.size()) {
+			p = q1.front();
+
+			q1.pop();
+			
+			for (int i = 0; i < p->_num_keys(); i++)
+				cout << p->_keysAt(i).first << ",";
+			for (int i = 0; i < p->_num_child(); i++)
+				q2.push(p->_childAt(i));
+
+			n1++;
+		} 
+
+		cout << endl << "Level :" << p->_get_level() << " Nodes : " << n1 << endl;
+
+		while (q2.size()) {
+			p = q2.front();
+
+			q2.pop();
+			
+			for (int i = 0; i < p->_num_keys(); i++)
+				cout << p->_keysAt(i).first << ",";
+			for (int i = 0; i < p->_num_child(); i++)
+				q1.push(p->_childAt(i));
+		
+			n2++;
+		}
+
+		cout << endl << "Level :" << p->_get_level() << " Nodes : " << n2 << endl;
+	}
+}
+
 void btree::_print(void) const {
 
 	_do_print(_rootp);
+	_do_level_traversal(_rootp);
 }
