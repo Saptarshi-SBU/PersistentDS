@@ -86,6 +86,8 @@ class btnode : public enable_shared_from_this<btnode> {
 
 		int _get_level(void) const;
 
+		bool _isLeaf(void) const;
+
 		void _print(void) const;
 
 

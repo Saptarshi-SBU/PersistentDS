@@ -162,6 +162,15 @@ int btnode::_separator(void) const {
 }
 
 /*
+ *  B-Tree node GET median
+ * 
+ */
+bool btnode::_isLeaf(void) const {
+	if (_num_child())
+		return false;
+	return true;
+}
+/*
  *  B-Tree node print node information
  * 
  */

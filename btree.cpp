@@ -180,8 +180,8 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
 
 	for (int i = 0; i < parentp->_num_child(); i++) {
 		if (parentp->_childAt(i) == right) {
-			parentp->_remove_key(parentp->_keysAt(i - 1).first);
 			merge_node->_insert_key(parentp->_keysAt(i - 1).first, parentp->_keysAt(i - 1).second);
+			parentp->_remove_key(parentp->_keysAt(i - 1).first);
 			break;
 		}	
 	}
@@ -223,20 +223,23 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
 
 bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, shared_ptr<btnode>& rnode) {
 
+	// should have at least one greater to init merge node
 	if (node->_num_keys() >= _max_children/2)
 		return false;
 
 	auto parentp = node->_parentp();
 
+	cout << "merge pchildren: " << parentp->_num_child() << " pmin key : " << parentp->_min << " pmax key : " << parentp->_max << endl;
+
 	for (int i = 0; i < parentp->_num_child(); i++) {
-		if (parentp->_childAt(i)->_min > node->_max) {
+		if (parentp->_childAt(i)->_min > parentp->_max) {
 			rnode = parentp->_childAt(i);
 			break;
 		}
 	}
 		
-	for (int i = 0; i < parentp->_num_child(); i++) {
-		if (parentp->_childAt(i)->_max < node->_min) {
+	for (int i = parentp->_num_child() - 1; i >= 0; i--) {
+		if (parentp->_childAt(i)->_max < parentp->_min) {
 			pnode = parentp->_childAt(i);
 			break;
 		}
@@ -247,8 +250,11 @@ bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, sha
 		return false;
 
 	// Test Right Sibling
-	if (rnode && (pnode->_num_keys() > _max_children/2))
+	if (rnode && (rnode->_num_keys() > _max_children/2))
 		return false;
+
+	cout << "left node key  : < " << pnode->_min << "," << pnode->_max << ">" << endl;
+	cout << "right node key : < " << rnode->_min << "," << rnode->_max << ">" << endl;
 
 	return true;
 }
@@ -332,17 +338,26 @@ shared_ptr<btnode> btree::_do_lookup(const bkey_t key, shared_ptr<btnode> node) 
 
 	TRACE_FUNC(__func__);
 
+	shared_ptr<btnode> rnode;
+
 	assert (node);
-	
+
+	cout << "lookup node <" << node->_min << "," << node->_max << ">" << endl;
+
 	for (int i = 0; i < node->_num_keys(); i++)
 		if (key == node->_keysAt(i).first)
 			return node;
 
 	for (int i = 0; i < node->_num_child(); i++) {
-		auto rnode = node->_childAt(i);
-		if ((key >= rnode->_min) && (key <= rnode->_max))
+		rnode = node->_childAt(i);
+		cout << "lookup node <" << rnode->_min << "," << rnode->_max << ">" << endl;
+		//if ((key >= rnode->_min) && (key <= rnode->_max))
+		if (key <= rnode->_min)
 			return _do_lookup(key, rnode);
 	}
+
+	if (node->_num_child())
+		return _do_lookup(key, rnode);
 
 	return nullptr;
 }
@@ -379,16 +394,21 @@ void btree::_delete(const bkey_t key) {
 	TRACE_FUNC(__func__);
 
 	auto curr = _lookup(key);
-	if (!curr)
+	if (!curr) {
+		cout << "key " << key << " not found " << endl;
 		return;
+	}
 
 	auto pprev = _inorder_predecessor(key);
 
 	assert(pprev->_num_child() == 0);
 
+	cout << "key : " << key << "inorder predecessor : " << pprev->_max << endl;
+
 	if (curr != pprev) {
 
 		// right-most key
+		
 		int rpos = pprev->_num_keys() - 1;
 
 		auto val = pprev->_keysAt(rpos);
@@ -408,7 +428,10 @@ void btree::_delete(const bkey_t key) {
 
 	auto node = pprev;
 
-	while (!_test_valid_leaf(node) || !(_test_valid_non_leaf(node))) {
+	cout << "pprev no keys: " << pprev->_num_keys() << " max children : " << _max_children <<  endl;
+
+	while ((node->_isLeaf() && !_test_valid_leaf(node)) || 
+	      (!node->_isLeaf() && !(_test_valid_non_leaf(node)))) {
 
 		shared_ptr<btnode> parentp = node->_parentp();
 
@@ -417,7 +440,7 @@ void btree::_delete(const bkey_t key) {
 		shared_ptr<btnode> nnode = nullptr; 
 
 		if (_test_merge(node, pnode, nnode))
-			node =_do_merge(node, pnode, nnode);
+			node =_do_merge(parentp, pnode, nnode);
 		else
 		if (pnode->_num_keys() >= _max_children/2)
 			_do_right_rotation(pnode, nnode, node);
@@ -533,6 +556,6 @@ void btree::_do_level_traversal(const shared_ptr<btnode>& node) const {
 
 void btree::_print(void) const {
 
-	_do_print(_rootp);
+//	_do_print(_rootp);
 	_do_level_traversal(_rootp);
 }

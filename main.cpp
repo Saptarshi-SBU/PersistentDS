@@ -29,8 +29,11 @@ int main(void) {
 	for (int i = 0;i < 500; i++)
 		bt->_insert(100 + i, value_t(NULL, 1000));
 	cout << "################## Printing Tree #####################" << endl;
-	bt->_print();
+	//bt->_print();
 	bt->_delete(227);
+	for (int i = 0; i < 100; i++)
+		bt->_delete(100 + i);
+	//bt->_delete(100);
 	bt->_print();
  	delete bt;
 #endif
