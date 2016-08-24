@@ -26,15 +26,22 @@ int main(void) {
 
 #if _TEST_TREE_
 	btree* bt = new btree(3);
-	for (int i = 0;i < 500; i++)
-		bt->_insert(100 + i, value_t(NULL, 1000));
+	for (int i = 1;i <= 20; i++)
+		bt->_insert(i, value_t(NULL, 1000));
 	cout << "################## Printing Tree #####################" << endl;
 	//bt->_print();
-	bt->_delete(227);
-	for (int i = 0; i < 100; i++)
-		bt->_delete(100 + i);
+	//bt->_delete(227);
+	//for (int i = 0; i < 100; i++)
+	//	bt->_delete(100 + i);
 	//bt->_delete(100);
+	bt->_insert(0, value_t(NULL, 1000));
 	bt->_print();
+	bt->_delete(10);
+	bt->_print();
+	bt->_delete(2);
+	bt->_print();
+	for (int i = 1;i <= 20; i++)
+		bt->_delete(i);
  	delete bt;
 #endif
 	return 0;

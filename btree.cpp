@@ -223,13 +223,15 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
 
 bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, shared_ptr<btnode>& rnode) {
 
-	// should have at least one greater to init merge node
+	cout << __func__ << endl;
+
+	// node does not violate b-tree property
 	if (node->_num_keys() >= _max_children/2)
-		return false;
+		return false;  
 
 	auto parentp = node->_parentp();
 
-	cout << "merge pchildren: " << parentp->_num_child() << " pmin key : " << parentp->_min << " pmax key : " << parentp->_max << endl;
+	cout << "Parent : " << parentp->_num_child() << "<" << parentp->_min << "," << parentp->_max << ">" << endl;
 
 	for (int i = 0; i < parentp->_num_child(); i++) {
 		if (parentp->_childAt(i)->_min > parentp->_max) {
@@ -239,6 +241,7 @@ bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, sha
 	}
 		
 	for (int i = parentp->_num_child() - 1; i >= 0; i--) {
+		cout << "Child : " << "<" << parentp->_childAt(i)->_min << "," << parentp->_childAt(i)->_max << ">" << endl;
 		if (parentp->_childAt(i)->_max < parentp->_min) {
 			pnode = parentp->_childAt(i);
 			break;
@@ -264,73 +267,84 @@ bool btree::_test_merge(shared_ptr<btnode>& node, shared_ptr<btnode>& pnode, sha
  */
 void btree::_do_right_rotation(shared_ptr<btnode>& left, shared_ptr<btnode>& right, shared_ptr<btnode>& node) {
 
-	assert(right);
+	TRACE_FUNC(__func__);
 
-	assert (right->_num_keys() < _max_children/2);
+	assert (right && (right->_num_keys() < _max_children/2));
 
-	element_t pkey, lkey;
+	assert (node && (node->_num_keys() >= _max_children/2));
+
+	assert (left && (left->_num_keys() >= _max_children/2));
+
+	element_t mid_key;
 
 	for (int i = 0; i < node->_num_keys(); i++) {
 		if (node->_keysAt(i).first < right->_min)
-			pkey = node->_keysAt(i);
+			mid_key = node->_keysAt(i);
 		else
 			break;
 	}
 
-	node->_remove_key(pkey.first);
+	node->_remove_key(mid_key.first);
 
-	right->_insert_key(pkey.first, pkey.second);
+	right->_insert_key(mid_key.first, mid_key.second);
 
 	// in-order predecessor in left child to parent node for RL-rotation
 	 
-	int i = left->_find_key(left->_max);
+	int max_index = left->_find_key(left->_max);
 
-	lkey = left->_keysAt(i);
+	element_t lkey = left->_keysAt(max_index);
 
 	left->_remove_key(lkey.first);
 
 	node->_insert_key(lkey.first, lkey.second);
 
-	auto pchild = left->_childAt(i + 1);
+	auto sibling = left->_childAt(max_index + 1);
 
-	right->_insert_child(pchild);
+	right->_insert_child(sibling);
 
-	left->_remove_child(pchild);
-
+	left->_remove_child(sibling);
 }
 
 void btree::_do_left_rotation(shared_ptr<btnode>& left, shared_ptr<btnode>& right, shared_ptr<btnode>& node) {
 
-	assert(left);
+	TRACE_FUNC(__func__);
 
-	assert(left->_num_keys() < _max_children/2);
+	assert(left && (left->_num_keys() < _max_children/2));
 
-	element_t pkey, rkey;
+	assert(right && (right->_num_keys() >= _max_children/2));
+
+	assert(node && (node->_num_keys() >= _max_children/2));
+
+	element_t mid_key;
 
 	for (int i = 0; i < node->_num_keys(); i++) {
 		if (node->_keysAt(i).first > left->_max)
-			pkey = node->_keysAt(i);
+			mid_key = node->_keysAt(i);
 		else
 			break;
 	}
 
-	node->_remove_key(pkey.first);
+	node->_remove_key(mid_key.first);
 
-	left->_insert_key(pkey.first, pkey.second);
+	left->_insert_key(mid_key.first, mid_key.second);
 
 	// Pick From Edges
 	
-	int i = right->_find_key(right->_min);
+	int min_index = right->_find_key(right->_min);
 
-	rkey = right->_keysAt(i);
+	element_t rkey = right->_keysAt(min_index);
 
 	right->_remove_key(rkey.first);
 
 	node->_insert_key(rkey.first, rkey.second);
 
-	left->_insert_child(right->_childAt(0));
+	assert(min_index == 0);
 
-	right->_remove_child(right->_childAt(0));
+	auto sibling = left->_childAt(min_index);
+
+	left->_insert_child(sibling);
+
+	right->_remove_child(sibling);
 }
 
 
@@ -428,7 +442,8 @@ void btree::_delete(const bkey_t key) {
 
 	auto node = pprev;
 
-	cout << "pprev no keys: " << pprev->_num_keys() << " max children : " << _max_children <<  endl;
+	cout << "pprev : " << pprev->_num_keys() << "<" << pprev->_min << "," << pprev->_max << ">" << endl;
+	cout << "curr  : " << curr->_num_keys()  << "<" << curr->_min  << "," << curr->_max  << ">" << endl;
 
 	while ((node->_isLeaf() && !_test_valid_leaf(node)) || 
 	      (!node->_isLeaf() && !(_test_valid_non_leaf(node)))) {

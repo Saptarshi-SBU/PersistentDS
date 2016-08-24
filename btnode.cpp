@@ -91,6 +91,13 @@ int btnode::_find_key(const bkey_t key) const {
 void btnode::_remove_key(const bkey_t key) {
 	 LOG << FUNC << endl;
 	_keys.erase(std::remove_if(_keys.begin(), _keys.end(), [key] (const element_t& p) { return p.first == key; }), _keys.end());
+	 if (_num_keys()) { 
+		_min = _keys.begin()->first;
+		_max = _keys.rbegin()->first;
+
+	 } else {
+		_min = _max = 0;
+	 }	
 }
 
 /*
