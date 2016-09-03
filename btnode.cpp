@@ -68,7 +68,7 @@ void btnode::_reset_parentp(void) {
  * 
  */
 void btnode::_insert_key(const bkey_t key, const value_t p) {
-	 LOG << FUNC << endl;
+//	 LOG << FUNC << endl;
 	_keys.push_back(make_pair(key, p));
 	 sort(_keys.begin(), _keys.end(), [] (const element_t& p, const element_t& q) { return (p.first < q.first);} );
 	_min = _keys.begin()->first;
@@ -89,7 +89,7 @@ int btnode::_find_key(const bkey_t key) const {
  * 
  */
 void btnode::_remove_key(const bkey_t key) {
-	 LOG << FUNC << endl;
+//	 LOG << FUNC << endl;
 	_keys.erase(std::remove_if(_keys.begin(), _keys.end(), [key] (const element_t& p) { return p.first == key; }), _keys.end());
 	 if (_num_keys()) { 
 		_min = _keys.begin()->first;
@@ -105,7 +105,7 @@ void btnode::_remove_key(const bkey_t key) {
  * 
  */
 void btnode::_insert_child(shared_ptr<btnode> node) {
-	 LOG << FUNC << endl;
+//	 LOG << FUNC << endl;
 	_child.push_back(node);
 //	 node->_reset_parentp();
 //	 node->_set_parentp(shared_ptr<btnode>(this));
@@ -127,7 +127,7 @@ int btnode::_find_child(shared_ptr<btnode>& node) const {
  * 
  */
 void btnode::_remove_child(shared_ptr<btnode> node) {
-	 LOG << FUNC << endl;
+//	 LOG << FUNC << endl;
 	_child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
 	 node->_reset_parentp();
 }
@@ -145,7 +145,7 @@ shared_ptr<btnode> btnode::_parentp(void) const {
  * 
  */
 element_t btnode::_keysAt(int no) const {
-	if (no >= _num_keys())
+	if ((no >= _num_keys()) || (no < 0))
 		throw exception();
 	return _keys.at(no);
 }
@@ -155,7 +155,7 @@ element_t btnode::_keysAt(int no) const {
  * 
  */
 shared_ptr<btnode> btnode::_childAt(int no) {
-	if (no >= _num_child())
+	if ((no >= _num_child()) || (no < 0))
 		throw exception();
 	return _child.at(no);
 }
@@ -182,7 +182,7 @@ bool btnode::_isLeaf(void) const {
  * 
  */
 void btnode::_print(void) const {
-	LOG << FUNC << endl;
+//	LOG << FUNC << endl;
 	LOG << LEVEL(_level) << KEY_LIMITS(_min, _max) << ENTRY_LIMITS(_num_keys(), _num_child()) << endl;
 #if 0
 	LOG << "key_list  : " ;

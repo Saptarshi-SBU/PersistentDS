@@ -12,12 +12,12 @@ class btree {
 		shared_ptr<btnode> _rootp;
 
 		int _max_children;
+
+		int _k;
 	
 		void _do_split(shared_ptr<btnode>&);
 
 		shared_ptr<btnode> _do_merge(shared_ptr<btnode>&, shared_ptr<btnode>&, shared_ptr<btnode>&);
-
-		bool _test_merge(shared_ptr<btnode>&, shared_ptr<btnode>&, shared_ptr<btnode>&);
 
 		void _do_right_rotation(shared_ptr<btnode>&, shared_ptr<btnode>&, shared_ptr<btnode>&);
 
@@ -34,6 +34,10 @@ class btree {
 		void _do_level_traversal(const shared_ptr<btnode>& node) const;
 	
 		shared_ptr<btnode> _locate_leaf(const bkey_t key, shared_ptr<btnode>&);
+
+                void _leaf_push2delete(bkey_t key, shared_ptr<btnode>&, shared_ptr<btnode>&);
+
+		shared_ptr<btnode> _rebalance_tree(shared_ptr<btnode> curr);
 
 		bool _test_valid_leaf(shared_ptr<btnode> node);
 

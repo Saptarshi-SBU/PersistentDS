@@ -5,6 +5,8 @@
 
 #define _TEST_NODE_ 0
 #define _TEST_TREE_ 1
+#define _FORWARD_DELETE 1
+#define _REVERSE_DELETE 0
 
 int main(void) {
 #if _TEST_NODE_
@@ -29,19 +31,16 @@ int main(void) {
 	for (int i = 1;i <= 20; i++)
 		bt->_insert(i, value_t(NULL, 1000));
 	cout << "################## Printing Tree #####################" << endl;
-	//bt->_print();
-	//bt->_delete(227);
-	//for (int i = 0; i < 100; i++)
-	//	bt->_delete(100 + i);
-	//bt->_delete(100);
-	bt->_insert(0, value_t(NULL, 1000));
 	bt->_print();
-	bt->_delete(10);
-	bt->_print();
-	bt->_delete(2);
-	bt->_print();
-	for (int i = 1;i <= 20; i++)
+#if _FORWARD_DELETE
+	for (int i = 1;i <= 20; i++) {
+#elif _REVERSE_DELETE
+	for (int i = 20;i >= 0; i--) {
+#endif
 		bt->_delete(i);
+	}        
+	cout << "################## Printing Tree #####################" << endl;
+	bt->_print();
  	delete bt;
 #endif
 	return 0;
