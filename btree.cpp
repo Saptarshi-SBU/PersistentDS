@@ -12,12 +12,13 @@
 #include <cassert>
 #include <queue>
 #include "btree.h"
+#include "trace.h"
 
-using namespace std;
-
-#define TRACE_FUNC(str) 1 //cout  << endl << str <<  endl
-
-#define DEBUG 1
+#if DEBUG 
+static bool debug = true;
+#else
+static bool debug = false;
+#endif
 
 btree::btree(int max) : _max_children(max) {
 
@@ -135,16 +136,16 @@ void btree::_do_split(shared_ptr<btnode>& node) {
 	if (parentp->_num_keys() >= _max_children)
 		_do_split(parentp);
 
-	#if DEBUG
-	cout << "btnode ref count " << node.use_count() << endl;
-	#endif
+	trace_record(debug, __func__, "split node use count :", node.use_count());
+
+	trace_record(debug, __func__, "split separator key :", p);
 
 	node.reset();
 }
 
 void btree::_do_insert(const bkey_t key, value_t val, shared_ptr<btnode>& node) {
 
-	TRACE_FUNC(__func__);
+	trace_record(debug, __func__, key);
 
 	if (!node)
 		return;
@@ -170,14 +171,13 @@ void btree::_insert(const bkey_t key, const value_t val) {
  */
 shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btnode>& left, shared_ptr<btnode>& right) {
 
-	//Sanity Check that we have no siblings to avoid merge
-        TRACE_FUNC(__func__);
+	//sanity rule check prior merge
 	
+	assert(parentp && (parentp->_num_child() >= 2));
+
 	assert(left && (left->_num_keys() <= (_k - 1)));
 
 	assert(right && (right->_num_keys() <= (_k - 1)));
-
-	assert(parentp && (parentp->_num_child() >= 2));
 
 	auto merge_node = shared_ptr<btnode> (new btnode());
 
@@ -185,14 +185,15 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
 	
 	merge_node->_set_level(merge_level);
 
-	cout << "Merge : left-max " << left->_max << " right-min " << right->_min << "parentp min-max " << parentp->_min << ":" << parentp->_max << endl;
+	trace_record(debug, __func__, " left-max ", left->_max, " right-min ", right->_min, 
+                               " parentp min-max <", parentp->_min, ",", parentp->_max, ">");
 
         for (int i = 0; i < parentp->_num_child(); i++) {
 		if (parentp->_childAt(i) == left) {
 			auto key = parentp->_keysAt(i);
 			merge_node->_insert_key(key.first, key.second);
 			parentp->_remove_key(key.first);
-			cout << "Merge : key removed from parent " << key.first << endl;
+			trace_record(debug, __func__, " key removed from parent ", key.first);
 			break;
 		}	
 	}
@@ -225,7 +226,7 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
 
 	merge_node->_set_parentp(parentp);
 
-	cout << "Merge Node : ";
+	trace_record(debug, __func__, "Node : ");
 
         merge_node->_print();
 
@@ -242,8 +243,6 @@ shared_ptr<btnode> btree::_do_merge(shared_ptr<btnode>& parentp, shared_ptr<btno
  */
 void btree::_do_right_rotation(shared_ptr<btnode>& curr, shared_ptr<btnode>& parentp, shared_ptr<btnode>& left) {
 
-	TRACE_FUNC(__func__);
-
 	assert (curr && (curr->_num_keys() < (_k - 1)));
 
 	//assert (parentp && (parentp->_num_keys() >= _k));
@@ -253,11 +252,12 @@ void btree::_do_right_rotation(shared_ptr<btnode>& curr, shared_ptr<btnode>& par
 	element_t mid_key;
 
 	for (int i = 0; i < parentp->_num_keys(); i++) {
-		if (parentp->_keysAt(i).first < left->_max)
-			mid_key = parentp->_keysAt(i);
-		else
+		mid_key = parentp->_keysAt(i);
+		if (mid_key.first > left->_max)
 			break;
 	}
+
+	trace_record(debug, __func__ , " mid key : ", mid_key.first);
 
 	parentp->_remove_key(mid_key.first);
 
@@ -291,12 +291,11 @@ void btree::_do_right_rotation(shared_ptr<btnode>& curr, shared_ptr<btnode>& par
  */
 void btree::_do_left_rotation(shared_ptr<btnode>& curr, shared_ptr<btnode>& parentp, shared_ptr<btnode>& right) {
 
-	TRACE_FUNC(__func__);
-
 	assert(curr && (curr->_num_keys() < (_k - 1)));
 
 	assert(right && (right->_num_keys() >= _k));
 
+        // Commented bcoz parent can be root
 	//assert(parentp && (parentp->_num_keys() >= _k));
 
 	element_t replace_key;
@@ -308,6 +307,7 @@ void btree::_do_left_rotation(shared_ptr<btnode>& curr, shared_ptr<btnode>& pare
                 replace_key = key;
 	}
 
+	trace_record(debug, __func__, " mid key : ", replace_key.first);
 
 	// Pick From Edges
 	
@@ -346,11 +346,9 @@ shared_ptr<btnode> btree::_do_lookup(const bkey_t key, shared_ptr<btnode> node) 
 
         int i;
 
-	TRACE_FUNC(__func__);
-
 	assert (node);
 
-	cout << "lookup node <" << node->_min << "," << node->_max << ">" << endl;
+	trace_record(debug, __func__, "lookup node <", node->_min, ",", node->_max, ">");
 
 	for (int i = 0; i < node->_num_keys(); i++)
 		if (key == node->_keysAt(i).first)
@@ -368,8 +366,6 @@ shared_ptr<btnode> btree::_do_lookup(const bkey_t key, shared_ptr<btnode> node) 
 }
 
 shared_ptr<btnode> btree::_lookup(const bkey_t key) {
-
-	TRACE_FUNC(__func__);
 
 	return _do_lookup(key, _rootp);
 }
@@ -392,19 +388,15 @@ bool btree::_test_valid_non_leaf(shared_ptr<btnode> node) {
 
 void btree::_leaf_push2delete(bkey_t key, shared_ptr<btnode>& curr, shared_ptr<btnode>& leaf) {
 
-        TRACE_FUNC(__func__);
-
 	assert(leaf->_num_keys());
 
 	assert(leaf->_num_child() == 0);
 
 	if (leaf == curr) {
-	        cout << "btkey deleted : " << key << "inorder leaf : " << leaf->_max << endl;
+	        trace_record(debug, __func__, "btkey deleted : ",  key, "inorder leaf : ", leaf->_max);
                 curr->_remove_key(key);
-	        cout << "num keys : " << curr->_num_keys() << endl;
 		return;
 	}
-
 
         //replace this key with that in the leaf. 
         //Ensure curr mantains ordering of child nodes
@@ -421,7 +413,7 @@ void btree::_leaf_push2delete(bkey_t key, shared_ptr<btnode>& curr, shared_ptr<b
 
         curr->_remove_key(key);
 
-	cout << "btkey deleted : " << key << "inorder leaf : " << leaf->_max << endl;
+        trace_record(debug, __func__, "btkey deleted : ",  key, "inorder leaf : ", leaf->_max);
 }
 
 /*
@@ -432,7 +424,7 @@ shared_ptr<btnode> btree::_rebalance_tree(shared_ptr<btnode> curr) {
 
      int i = 0;
 
-     TRACE_FUNC(__func__);
+     trace_record(debug, __func__, "rebalance triggered ");
 
      assert (curr != nullptr);
 
@@ -487,16 +479,15 @@ shared_ptr<btnode> btree::_rebalance_tree(shared_ptr<btnode> curr) {
  */     
 void btree::_delete(const bkey_t key) {
 
-	TRACE_FUNC(__func__);
 
-	cout << "delete btkey " << key << endl; 
+	trace_record(debug, __func__, "key ", key); 
 	
 	if (_rootp == nullptr)
 		return;
 
 	auto curr = _lookup(key);
 	if (!curr) {
-		cout << "btkey " << key << " not found " << endl;
+		trace_record(debug, __func__, "ERR btkey ", key, " not found ");
 		return;
 	}
 
@@ -521,7 +512,7 @@ void btree::_delete(const bkey_t key) {
  */
 shared_ptr<btnode> btree::_inorder_predecessor(const bkey_t key) {
 
-	TRACE_FUNC(__func__);
+	trace_record(debug, __func__, "key ", key); 
 
 	auto node = _do_lookup(key, _rootp);
 	if (!node)
@@ -544,7 +535,7 @@ shared_ptr<btnode> btree::_inorder_predecessor(const bkey_t key) {
 		
 void btree::_do_print(const shared_ptr<btnode>& node) const {
 
-	TRACE_FUNC(__func__);
+	trace_record(debug, __func__); 
 
 	if (!node)
 		return;
@@ -554,12 +545,12 @@ void btree::_do_print(const shared_ptr<btnode>& node) const {
 
 	if (!num_c) {
 		for (auto i = 0; i < num_k; i++)
-		 	cout << "inorder btkey : " << node->_keysAt(i).first << endl;
+		 	trace_record(debug, __func__, " inorder btkey : ", node->_keysAt(i).first);
 	} else {
 		for (auto i = 0; i < num_c; i++) {
 			_do_print(node->_childAt(i));
 		 	if (i < num_k)
-		 		cout << " inorder btkey : " << node->_keysAt(i).first << endl;
+		 		trace_record(debug, __func__, " inorder btkey : ", node->_keysAt(i).first);
 		}
 	}
 	node->_print();
@@ -582,37 +573,44 @@ void btree::_do_level_traversal(const shared_ptr<btnode>& node) const {
 
 		while (q1.size()) {
 			p = q1.front();
-
 			q1.pop();
-			
-			for (int i = 0; i < p->_num_keys(); i++)
-				cout << p->_keysAt(i).first << ", ";
-			//cout << p->_keysAt(i).first << " ref :" << p.use_count() << " num child : " << p->_num_child() << ",";
+			std::string str;	
+			for (int i = 0; i < p->_num_keys(); i++) {
+				str.append(to_string(p->_keysAt(i).first));
+                                str.append(", ");
+			}
 			for (int i = 0; i < p->_num_child(); i++)
 				q2.push(p->_childAt(i));
 
-			cout << "<" << p->_num_child() << ">" << endl;
+			str.append("<");
+			str.append(to_string(p->_num_child()));
+			str.append(">");
+			trace_record(debug, __func__, str);
 			n1++;
 		} 
 
-		cout << endl << "Level :" << p->_get_level() << " Nodes : " << n1 << endl;
+		trace_record(debug, __func__, "Level : ", p->_get_level()," Nodes : ", n1);
 
 		while (q2.size()) {
 			p = q2.front();
-
 			q2.pop();
+			std::string str;
 			
-			for (int i = 0; i < p->_num_keys(); i++)
-				cout << p->_keysAt(i).first << ", ";
-			//cout << p->_keysAt(i).first << " ref :" << p.use_count() << " num child : " << p->_num_child() << ",";
+			for (int i = 0; i < p->_num_keys(); i++) {
+				str.append(to_string(p->_keysAt(i).first));
+                                str.append(", ");
+			}
 			for (int i = 0; i < p->_num_child(); i++)
 				q1.push(p->_childAt(i));
 		
-			cout << "<" << p->_num_child() << ">" << endl;
+			str.append("<");
+			str.append(to_string(p->_num_child()));
+			str.append(">");
+			trace_record(debug, __func__, str);
 			n2++;
 		}
 
-		cout << endl << "Level :" << p->_get_level() << " Nodes : " << n2 << endl;
+		trace_record(debug, __func__, "Level : ", p->_get_level()," Nodes : ", n2);
 	}
 }
 

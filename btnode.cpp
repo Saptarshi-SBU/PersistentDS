@@ -4,8 +4,13 @@
 #include <stdexcept>
 
 #include "btnode.h"
+#include "trace.h"
 
-#define LOG cout
+#if DEBUG 
+static bool debug = true;
+#else
+static bool debug = false;
+#endif
 
 /*
  *  B-Tree node constructor
@@ -18,7 +23,6 @@ btnode::btnode(void) : _parent(NULL), _level(0) { }
  * 
  */
 btnode::~btnode() {
-//	 LOG << FUNC << KEY_LIMITS(_min, _max) << ENTRY_LIMITS(_num_keys(), _num_child()) << endl;
 	_keys.clear();
 	_child.clear();
 }
@@ -68,7 +72,6 @@ void btnode::_reset_parentp(void) {
  * 
  */
 void btnode::_insert_key(const bkey_t key, const value_t p) {
-//	 LOG << FUNC << endl;
 	_keys.push_back(make_pair(key, p));
 	 sort(_keys.begin(), _keys.end(), [] (const element_t& p, const element_t& q) { return (p.first < q.first);} );
 	_min = _keys.begin()->first;
@@ -89,12 +92,10 @@ int btnode::_find_key(const bkey_t key) const {
  * 
  */
 void btnode::_remove_key(const bkey_t key) {
-//	 LOG << FUNC << endl;
 	_keys.erase(std::remove_if(_keys.begin(), _keys.end(), [key] (const element_t& p) { return p.first == key; }), _keys.end());
 	 if (_num_keys()) { 
 		_min = _keys.begin()->first;
 		_max = _keys.rbegin()->first;
-
 	 } else {
 		_min = _max = 0;
 	 }	
@@ -105,8 +106,8 @@ void btnode::_remove_key(const bkey_t key) {
  * 
  */
 void btnode::_insert_child(shared_ptr<btnode> node) {
-//	 LOG << FUNC << endl;
 	_child.push_back(node);
+//       Revisit :
 //	 node->_reset_parentp();
 //	 node->_set_parentp(shared_ptr<btnode>(this));
 //	 node->_set_parentp(shared_from_this());
@@ -127,7 +128,6 @@ int btnode::_find_child(shared_ptr<btnode>& node) const {
  * 
  */
 void btnode::_remove_child(shared_ptr<btnode> node) {
-//	 LOG << FUNC << endl;
 	_child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
 	 node->_reset_parentp();
 }
@@ -165,7 +165,9 @@ shared_ptr<btnode> btnode::_childAt(int no) {
  * 
  */
 int btnode::_separator(void) const {
-	return _keys.size()/2;
+	int n = _keys.size();
+	//return n/2;
+	return ((n % 2) == 0) ? n/2 - 1 : n/2;
 }
 
 /*
@@ -182,15 +184,5 @@ bool btnode::_isLeaf(void) const {
  * 
  */
 void btnode::_print(void) const {
-//	LOG << FUNC << endl;
-	LOG << LEVEL(_level) << KEY_LIMITS(_min, _max) << ENTRY_LIMITS(_num_keys(), _num_child()) << endl;
-#if 0
-	LOG << "key_list  : " ;
-	for (auto& i : _keys)
-		LOG << i.first << "  ";
-	LOG << "child_list  : " ;
-	for (auto& i : _child)
-		LOG << ENTRY_LIMITS(i->_min, i->_max);
-	LOG << endl;
-#endif
+	trace_record(debug, __func__, "level: ", _level, "<", _min, ",", _max, ">", "num keys: ", _num_keys(), " num child: ", _num_child());
 }
