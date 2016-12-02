@@ -1,8 +1,14 @@
+/*-------------------------------------------------------
+ *
+ *  g++ -std=c++11 -o main main.cpp btnode.cpp btree.cpp
+ *
+ * ------------------------------------------------------*/
 #include <iostream>
 #include <chrono>
 
 #include "btnode.h"
 #include "btree.h"
+#include "bptnode.h"
 
 #define _TEST_NODE_ 0
 #define _TEST_TREE_ 1
