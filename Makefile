@@ -5,6 +5,7 @@ CFLAGS = -std=c++11 -g
 
 SRC =btnode.cpp
 SRC+=btree.cpp
+SRC+=bptree.cpp
 SRC+=main.cpp
 
 all: 

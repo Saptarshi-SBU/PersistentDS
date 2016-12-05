@@ -8,6 +8,7 @@
 #ifndef _BPTNODE_H
 #define _BPTNODE_H
 
+#include <iostream>
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
@@ -15,25 +16,29 @@
 #include <vector>
 #include <utility>
 #include <memory>
+#include "trace.h"
 
 using namespace std;
 
 typedef unsigned long long index_t;
 
+#define LEAF(raw_node) static_pointer_cast<bptnode_leaf>(raw_node)
+#define INTERNAL(raw_node) static_pointer_cast<bptnode_internal>(raw_node)
+
 struct mapping_t {
 
     void* _base; //memory
 
-	off_t _off; //on-disk
+    off_t _off; //on-disk
 
     size_t _size;
 
-	mapping_t(void* base, unsigned long long offset, size_t bytes) : 
+	mapping_t(void* base, unsigned long long offset, size_t bytes) :
         _base(base), _off(offset), _size(bytes) { }
 
 	mapping_t() { }
 
-	~mapping_t() { }
+       ~mapping_t() { }
 };
 
 typedef struct mapping_t mapping_t;
@@ -44,27 +49,30 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
 
 	protected:
 
-	    vector<index_t> _keys;
-
         shared_ptr<bptnode_raw> _parent;
-
-        node_t _type;
 
         int _level;
 
+        int _max_children;
+
 	public:
 
-	    index_t _max_cached, _min_cached;
+	vector<index_t> _keys;
 
-	    bptnode_raw(shared_ptr<bptnode_raw> node, int level) {
-            set_parentp(node);
-            _level = level;
-        }     
+        node_t _type;
 
-        virtual ~bptnode_raw();
+        index_t _max_cached, _min_cached;
+
+	bptnode_raw(shared_ptr<bptnode_raw> parent, int branch) : _max_children(branch), _parent(parent) { }
+
+        virtual ~bptnode_raw() {}
 
         shared_ptr<bptnode_raw> _parentp(void) const {
 	        return _parent;
+        }
+
+        int _get_level(void) {
+            return _level;
         }
 
         index_t _keysAt(int no) const {
@@ -77,19 +85,19 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
 	        return _keys.size()/2;
         }
 
-	    void set_parentp(shared_ptr<bptnode_raw> node) {
+	void set_parentp(shared_ptr<bptnode_raw> node) {
             _parent = node;
         }
 
-	    void reset_parentp(void) {
+        void reset_parentp(void) {
             _parent.reset();
-        }    
+        }
 
         void insert_key(const index_t key) {
-            assert(std::find(_keys.begin(), _keys.end(), key) != _keys.end());
+            assert(std::find(_keys.begin(), _keys.end(), key) == _keys.end());
             _keys.push_back(key);
 
-            sort(_keys.begin(), _keys.end(), 
+            sort(_keys.begin(), _keys.end(),
                  [] (const index_t& p, const index_t& q) { return (p < q);} );
 
             _min_cached = *_keys.begin();
@@ -97,7 +105,7 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
         }
 
         void remove_key(const index_t key) {
-	        _keys.erase(std::remove_if(_keys.begin(), _keys.end(), 
+	    _keys.erase(std::remove_if(_keys.begin(), _keys.end(),
                  [key] (const index_t& p) { return p == key; }), _keys.end());
 
             _min_cached = *_keys.begin();
@@ -105,104 +113,149 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
         }
 
         int find_key(const index_t key) const {
-	        auto it = std::find_if(_keys.begin(), _keys.end(), 
+	        auto it = std::find_if(_keys.begin(), _keys.end(),
                  [key] (const index_t p) { return p == key;});
   	        return (it != _keys.end()) ? std::distance(_keys.begin(), it) : -1;
         }
 
-        void sort_node(vector<shared_ptr<bptnode_raw>>& node_list) { 
-            std::sort(node_list.begin(), node_list.end(), 
-                [] (shared_ptr<bptnode_raw> p, shared_ptr<bptnode_raw> q) { 
+        void sort_node(vector<shared_ptr<bptnode_raw>>& node_list) {
+            std::sort(node_list.begin(), node_list.end(),
+                [] (shared_ptr<bptnode_raw> p, shared_ptr<bptnode_raw> q) {
                 return (p->_min_cached < q->_min_cached);
                 });
         }
 
-	    virtual void print(void) const {}
+        int _num_keys(void) {
+            return _keys.size();
+        }
+
+        virtual int _num_child(void) = 0;
+
+        virtual shared_ptr<bptnode_raw> _childAt(int) = 0;
+
 };
 
 class bptnode_internal : public bptnode_raw {
 
 	protected:
 
-	    vector<shared_ptr<bptnode_raw>> _child;
+	vector<shared_ptr<bptnode_raw>> _child;
 
 	public:
 
-        bptnode_internal(shared_ptr<bptnode_raw>parent, int level): 
-            bptnode_raw(parent, level) {
+        bptnode_internal(shared_ptr<bptnode_internal> parent, int branch):
+            bptnode_raw(parent, branch) {
             _type = Internal;
         }
 
         ~bptnode_internal() {
             _keys.clear();
             _child.clear();
-        }  
+        }
 
         void insert_child(shared_ptr<bptnode_raw> node) {
             _child.push_back(node);
             sort_node(_child);
-        }   
+        }
 
         int find_child(shared_ptr<bptnode_raw>& node) {
-	        auto it = std::find(_child.begin(), _child.end(), node);
-	        return (it != _child.end()) ? std::distance(_child.begin(), it) : -1;
+	    auto it = std::find(_child.begin(), _child.end(), node);
+	    return (it != _child.end()) ? std::distance(_child.begin(), it) : -1;
         }
 
         void remove_child(shared_ptr<bptnode_raw> node) {
-	        _child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
-	        node->reset_parentp();
+	     _child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
+	     node->reset_parentp();
         }
 
-	    void print(void) {}
+        int _num_child(void) {
+             return _child.size();
+        }
+
+        shared_ptr<bptnode_raw> _childAt(int i) {
+            if (i >= _child.size())
+                throw exception();
+            else
+                return _child.at(i);
+        }
+
+	void print(void) {
+	    trace_record(true, __func__, "level: ", _level, "<", _min_cached, ",", _max_cached, ">", 
+                    "num keys: ", _num_keys(), " num child: ", _num_child());
+        }    
 };
 
 class bptnode_leaf : public bptnode_raw {
 
-	protected:
-
-	    map<index_t, mapping_t> _kv;
-
-        shared_ptr<bptnode_leaf> next;
-
 	public:
 
-        bptnode_leaf(shared_ptr<bptnode_raw>parent, int level): 
-            bptnode_raw(parent, level) {
+	map<index_t, mapping_t> _kv;
+
+        shared_ptr<bptnode_leaf> _prev, _next;
+
+        bptnode_leaf(shared_ptr<bptnode_internal> parent, int branch):
+            bptnode_raw(parent, branch) {
             _type = Leaf;
+            _prev = _next = nullptr;
         }
 
         ~bptnode_leaf() {
             _keys.clear();
             _kv.clear();
-        }  
+        }
 
         shared_ptr<bptnode_leaf> next_record() {
-            return next;
-         }
+            return _next;
+        }
 
-         void update_next_record(shared_ptr<bptnode_leaf> node) {
-             next = node;
-         }    
+        void update_next_record(shared_ptr<bptnode_leaf> node) {
+             _next = node;
+        }
 
-         void insert_record(const index_t key, const mapping_t& val) {
+        void insert_record(const index_t key, const mapping_t& val) {
              assert(_kv.find(key) == _kv.end());
              _kv[key] = val;
              insert_key(key);
-         }    
- 
-         mapping_t& find_record(const index_t key) {
-             if (_kv.find(key) == _kv.end())
-                throw exception();
-             return _kv[key];
-         }    
+        }
 
-         void remove_record(const index_t key) {
+        mapping_t& find_record(const index_t key) {
+            if (_kv.find(key) == _kv.end())
+                throw exception();
+            return _kv[key];
+         }
+
+        void remove_record(const index_t key) {
              assert(_kv.find(key) != _kv.end());
              _kv.erase(key);
              remove_key(key);
-         }    
+        }
 
-	     void print(void) { }
+        int _num_child(void) {
+             return 0;
+        }
+
+        shared_ptr<bptnode_raw> _childAt(int i) {
+            throw exception();
+        }
+
+        void update_chain(shared_ptr<bptnode_leaf> lchild,
+                shared_ptr<bptnode_leaf> rchild) {
+
+            if (lchild) {
+                this->_prev = lchild;
+                lchild->_next = shared_ptr<bptnode_leaf>(this);
+            }
+
+            if (rchild) {
+                this->_next = rchild;
+                rchild->_prev = shared_ptr<bptnode_leaf>(this);
+            }
+        }
+
+	void print(void) {
+	    trace_record(true, __func__, "level: ", _level, "<", _min_cached, ",", _max_cached, ">", 
+                    "num keys: ", _num_keys(), " num entry: ", _kv.size());
+        }
 };
 
 #endif

@@ -3,6 +3,8 @@
 
 #include <iostream>
 
+using namespace std;
+
 template <typename T>
 void trace_record(T t) {
     std::cout << t ;

@@ -8,12 +8,16 @@
 
 #include "btnode.h"
 #include "btree.h"
+
 #include "bptnode.h"
+#include "bptree.h"
 
 #define _TEST_NODE_ 0
-#define _TEST_TREE_ 1
-#define _TEST_DELETE_ 1
-#define _FORWARD_DELETE 1
+#define _TEST_BPNODE_ 1
+#define _TEST_TREE_ 0
+#define _TEST_BPTREE_ 1
+#define _TEST_DELETE_ 0
+#define _FORWARD_DELETE 0
 #define _REVERSE_DELETE 0
 
 int main(int argc, char **argv) {
@@ -30,7 +34,7 @@ int main(int argc, char **argv) {
 	}
 
 	int nodes  = atoi(argv[2]);
-	
+
 #if _TEST_NODE_
 
 	shared_ptr<btnode> node (new btnode());
@@ -46,6 +50,23 @@ int main(int argc, char **argv) {
 	for (int i = 0;i < 100; i++)
 		node->_remove_key(100 + i);
 	node->_print();
+#endif
+
+#if _TEST_BPNODE_
+
+	auto node = blkptr_leaf_t (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
+	for (int i = 0;i < 3; i++)
+		node->insert_record(100 + i, mapping_t(NULL, 1000, 32));
+	node->insert_record(99, mapping_t(NULL, 1000, 32));
+	node->print();
+	int pos = node->find_key(102);
+	cout << "Pos " << pos << endl;
+	auto v = node->_keysAt(pos);
+	cout << "Value " << v << endl;
+	cout << "Keys Size " << node->_num_keys() << endl;
+	for (int i = 0;i < 100; i++)
+		node->remove_key(100 + i);
+	node->print();
 #endif
 
 #if _TEST_TREE_
@@ -67,15 +88,26 @@ int main(int argc, char **argv) {
 	for (int i = nodes;i >= 0; i--) {
 #endif
 		bt->_delete(i);
-	}        
+	}
 	auto t4 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
 #endif
 	bt->_print();
  	delete bt;
 #endif
+
+#if _TEST_BPTREE_
+	bptree* bt = new bptree(fanout);
+	for (int i = 1;i <= nodes; i++)
+	    bt->insert(i, mapping_t(NULL, 1000, 32));
+	bt->print();
+ 	delete bt;
+#endif        
+
+#if 0
 	cout << "################## Printing B-Tree Stats #####################" << endl;
-	cout << " insert : " << ins_fp_ms.count() << " msecs " << endl; 
-	cout << " delete : " << del_fp_ms.count() << " msecs " << endl; 
+	cout << " insert : " << ins_fp_ms.count() << " msecs " << endl;
+	cout << " delete : " << del_fp_ms.count() << " msecs " << endl;
 	return 0;
+#endif
 }
