@@ -25,15 +25,24 @@ bptree::bptree(int max) : _max_children(max) {
     if (max < 3)
         throw "min branching factor expected is 3";
     else {
-        _rootp = blkptr_t (new bptnode_internal(blkptr_internal_t(nullptr), max));
-        // Min Capacity Constraint
+        // BUG FIX : First Node to be allocated in a B+ Tree is a leaf node
+        _rootp = blkptr_t (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
         _k = max/2;
+        _total_merges = _total_splits = 0;
+        _total_nodes = 1;
     }
 }
 
 bptree::~bptree() {
     if (_rootp)
         _tree_destroy(_rootp);
+}
+
+void bptree::stats(void) const {
+
+    trace_record(debug, "total nodes ", _total_nodes);
+    trace_record(debug, "total splits ", _total_splits);
+    trace_record(debug, "total merges ", _total_merges);
 }
 
 // We do post-order traversal to de-allocate all nodes of
@@ -48,6 +57,7 @@ void bptree::_tree_destroy(blkptr_t node) {
 
     node->reset_parentp();
     node.reset();
+    _total_nodes--;
 }
 
 // To retrive the block contents, we need to access the leaf.
@@ -55,18 +65,29 @@ void bptree::_tree_destroy(blkptr_t node) {
 // includes our key. Note we can return node type root or leaf.
 blkptr_leaf_t bptree::_tree_get_leaf_node(const bkey_t key, blkptr_t& node) {
 
-    if (!node)
-        return blkptr_leaf_t();
+    trace_record(debug, __func__);
 
-    if (!(node->_num_child()))
+    blkptr_t next;
+
+    if (!node) {
+        trace_record(debug, " leaf node not found!"); 
+        return blkptr_leaf_t();
+    }    
+
+    if (!(node->_num_child())) {
+        trace_record(debug, " leaf node found!"); 
         return LEAF(node);
+    }    
 
     for (int i = 0; i < node->_num_child(); i++) {
-        auto node_in_range = node->_childAt(i);
-        if (key > node_in_range->_max_cached)
+        next = node->_childAt(i);
+        trace_record(debug, "max cached ", next->_max_cached);
+        if (key > next->_max_cached)
             continue;
-        return _tree_get_leaf_node(key, node_in_range);
+        break;
     }
+
+    return _tree_get_leaf_node(key, next);
 }
 
 // To find internal node, which has references to a key in the leaf
@@ -74,14 +95,20 @@ blkptr_leaf_t bptree::_tree_get_leaf_node(const bkey_t key, blkptr_t& node) {
 // next key in sucession in inorder fashion.
 blkptr_internal_t bptree::_tree_get_internal_node(const bkey_t key, blkptr_t& node) {
 
-    if (!node)
+    trace_record(debug, __func__);
+
+    if (!node) {
+        trace_record(debug, " internal node not found!"); 
         return blkptr_internal_t();
+    }    
 
     // We should never reach the leaf
     assert(node->_type == Leaf);
 
-    if (node->find_key(key) > 0)
+    if (node->find_key(key) > 0) {
+        trace_record(debug, " internal node found!"); 
         return INTERNAL(node);
+    }    
 
     for (int i = 0; i < node->_num_child(); i++) {
         auto node_in_range = node->_childAt(i);
@@ -96,6 +123,8 @@ blkptr_internal_t bptree::_tree_get_internal_node(const bkey_t key, blkptr_t& no
 // we start detecting a constraint violation.
 void bptree::_node_split(blkptr_t node) {
 
+    trace_record(debug, __func__);
+
     assert(node && (node->_num_keys() >= _max_children));
 
     blkptr_t parentp, lchildp, rchildp;
@@ -105,8 +134,11 @@ void bptree::_node_split(blkptr_t node) {
 
     // Parent needs to be updated with the siblings once created
     parentp = node->_parentp();
-    if (!parentp)
+    if (!parentp) {
         parentp = blkptr_internal_t (new bptnode_internal(blkptr_internal_t(nullptr), level - 1));
+        _total_nodes++;
+    } else
+        INTERNAL(parentp)->remove_child(node);
 
     // Split the node and create the siblings
     // B+-Tree needs separate treatment for leaf and internal nodes
@@ -130,6 +162,7 @@ void bptree::_node_split(blkptr_t node) {
         // Update the leaf nodes link chain
         LEAF(lchildp)->update_chain(LEAF(node)->_prev, LEAF(rchildp));
         LEAF(rchildp)->update_chain(LEAF(lchildp), LEAF(node)->_next);
+        _total_nodes+=2;
 
         break;
     }
@@ -163,6 +196,7 @@ void bptree::_node_split(blkptr_t node) {
 
         // Keep the middle-value in the parent only (unlike leaf)
         parentp->insert_key(node->_keysAt(split_index));
+        _total_nodes+=2;
         break;
     }
 
@@ -171,24 +205,29 @@ void bptree::_node_split(blkptr_t node) {
     }
 
     // Update old and new references
-    INTERNAL(parentp)->remove_child(node);
 
     INTERNAL(parentp)->insert_child(lchildp);
     INTERNAL(parentp)->insert_child(rchildp);
 
+    // If node was the root node
+    if (_rootp == node) {
+        trace_record(debug, " updating root!");
+        _rootp = parentp;
+    }   
+
+    //FIX : Compare shared_ptr prior reset
     node->reset_parentp();
     node.reset();
+    _total_nodes--;
 
-    // If node was the root node
-    if (_rootp == node)
-        _rootp = parentp;
+    _total_splits++;
 
     // In case, siblings addition to parent violated constraint
     if (parentp->_num_keys() >= _max_children)
         _node_split(parentp);
 
-    trace_record(debug, __func__, "split node use count :", node.use_count());
-    trace_record(debug, __func__, "split separator key :", split_index);
+    trace_record(debug, __func__, " split node use count :", node.use_count());
+    trace_record(debug, __func__, " split separator index :", split_index);
 }
 
 // B+-Tree insert operation algorithm
@@ -197,12 +236,13 @@ void bptree::_tree_insert(const index_t key, mapping_t val, blkptr_t& node) {
     if (!node)
         return;
 
+    trace_record(debug, __func__, " key ", key);
+
     auto leaf = _tree_get_leaf_node(key, node);
-    assert (leaf);
+
+    assert (leaf && (leaf->_type == Leaf));
 
     leaf->insert_record(key, val);
-
-    trace_record(debug, __func__, key);
 
     if (leaf->_num_keys() >= _max_children)
         _node_split(dynamic_pointer_cast<bptnode_raw>(leaf));
@@ -218,6 +258,8 @@ void bptree::insert(const index_t key, const mapping_t val) {
 //This is the last resort in re-balancing process when stealing is
 //not possible
 blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr_t rchildp) {
+
+    trace_record(debug, __func__);
 
     //sanity rule check prior merge
     assert(parentp && (parentp->_num_child() >= 2));
@@ -301,7 +343,8 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
 
     merge_node->set_parentp(parentp);
 
-    trace_record(debug, __func__, "Node : ");
+    _total_merges++;
+
 
     lchildp.reset();
     rchildp.reset();
@@ -558,6 +601,7 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
     queue<shared_ptr<bptnode_raw>> q1, q2;
     shared_ptr<bptnode_raw> p;
     int n1, n2;
+    bool bFlag = false;
 
     q1.push(node);
 
@@ -568,7 +612,7 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
         while (q1.size()) {
             p = q1.front();
             q1.pop();
-            std::string str;
+            std::string str(" ");
             for (int i = 0; i < p->_num_keys(); i++) {
                 str.append(to_string(p->_keysAt(i)));
                                 str.append(", ");
@@ -581,14 +625,18 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
             str.append(">");
             trace_record(debug, __func__, str);
             n1++;
+            bFlag = true;
         }
 
-        trace_record(debug, __func__, "Level : ", p->_get_level()," Nodes : ", n1);
+        if (bFlag) {
+            trace_record(debug, __func__, " Level : ", p->_get_level()," Nodes : ", n1);
+            bFlag = false;
+        }     
 
         while (q2.size()) {
             p = q2.front();
             q2.pop();
-            std::string str;
+            std::string str(" ");
 
             for (int i = 0; i < p->_num_keys(); i++) {
                 str.append(to_string(p->_keysAt(i)));
@@ -602,9 +650,14 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
             str.append(">");
             trace_record(debug, __func__, str);
             n2++;
+            bFlag = true;
         }
 
-        trace_record(debug, __func__, "Level : ", p->_get_level()," Nodes : ", n2);
+        if (bFlag) {
+            trace_record(debug, __func__, " Level : ", p->_get_level()," Nodes : ", n2);
+            bFlag = false;
+        }     
+
     }
 }
 

@@ -1,7 +1,6 @@
-TARGET = main
+TARGET = btree
 CC = g++
-CFLAGS = -std=c++11 -g 
-#CFLAGS = -std=c++11 -g -DDEBUG
+CFLAGS = -std=c++11 -g -DDEBUG
 
 SRC =btnode.cpp
 SRC+=btree.cpp

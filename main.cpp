@@ -5,6 +5,8 @@
  * ------------------------------------------------------*/
 #include <iostream>
 #include <chrono>
+#include <errno.h>
+#include <unistd.h>
 
 #include "btnode.h"
 #include "btree.h"
@@ -13,27 +15,59 @@
 #include "bptree.h"
 
 #define _TEST_NODE_ 0
-#define _TEST_BPNODE_ 1
+#define _TEST_BPNODE_ 0
+#define _TEST_BPINTERNALNODE_ 0
 #define _TEST_TREE_ 0
 #define _TEST_BPTREE_ 1
 #define _TEST_DELETE_ 0
 #define _FORWARD_DELETE 0
 #define _REVERSE_DELETE 0
 
+#define DEFAULT_BRANCH_FACTOR 3
+#define DEFAULT_NUM_KEYS 1
+
+struct options {
+	int fanout;
+	int nr_keys;
+};
+
+int
+parse(int argc, char **argv, struct options* opt) {
+	int c = 0;
+
+	while ((c = getopt(argc, argv, "b:n:")) != -1) {
+
+        	switch(c) {
+       		case 'b':
+	    	if (optarg)
+                    opt->fanout = atoi(optarg);
+                break;
+
+       		case 'n':
+	    	if (optarg)
+                    opt->nr_keys = atoi(optarg);
+                break;
+               
+                default:
+                cerr << "Usage : [-b] fanout [-n] number of keys " << endl;
+                return -EINVAL;
+               }        
+        }
+
+        return 0;
+}        
+
 int main(int argc, char **argv) {
 
-	if (argc < 3) {
-		std::cout << "Usage :" << "program <degree> <node_count>" << endl;
-		return -1;
-	}
+	struct options opt = { DEFAULT_BRANCH_FACTOR,DEFAULT_NUM_KEYS };
 
-	int fanout = atoi(argv[1]);
-	if (fanout < 3) {
+	if (parse(argc, argv, &opt) < 0)
+		return -1;
+
+	if (opt.fanout < 3) {
 		cout << "invalid argument : min b-tree fanout is 3 " << endl;
-		return -1;
+		return -EINVAL;
 	}
-
-	int nodes  = atoi(argv[2]);
 
 #if _TEST_NODE_
 
@@ -69,11 +103,28 @@ int main(int argc, char **argv) {
 	node->print();
 #endif
 
+#if _TEST_BPINTERNALNODE_
+
+	auto node = blkptr_internal_t (new bptnode_internal(blkptr_internal_t(nullptr), 0));
+	for (int i = 0;i < 3; i++)
+		node->insert_key(100 + i);//, mapping_t(NULL, 1000, 32));
+	node->insert_key(99);//, mapping_t(NULL, 1000, 32));
+	node->print();
+	int pos = node->find_key(102);
+	cout << "Pos " << pos << endl;
+	auto v = node->_keysAt(pos);
+	cout << "Value " << v << endl;
+	cout << "Keys Size " << node->_num_keys() << endl;
+	for (int i = 0;i < 100; i++)
+		node->remove_key(100 + i);
+	node->print();
+#endif
+
 #if _TEST_TREE_
-	btree* bt = new btree(fanout);
+	btree* bt = new btree(opt.fanout);
 
 	auto t1 = std::chrono::high_resolution_clock::now();
-	for (int i = 1;i <= nodes; i++) {
+	for (int i = 1;i <= opt.nr_keys; i++) {
 		bt->_insert(i, value_t(NULL, 1000));
 	}
 	auto t2 = std::chrono::high_resolution_clock::now();
@@ -83,9 +134,9 @@ int main(int argc, char **argv) {
 
 	auto t3 = std::chrono::high_resolution_clock::now();
 #if _FORWARD_DELETE
-	for (int i = 1;i <= nodes; i++) {
+	for (int i = 1;i <= opt.nr_keys; i++) {
 #elif _REVERSE_DELETE
-	for (int i = nodes;i >= 0; i--) {
+	for (int i = opt.nr_keys;i >= 0; i--) {
 #endif
 		bt->_delete(i);
 	}
@@ -97,10 +148,11 @@ int main(int argc, char **argv) {
 #endif
 
 #if _TEST_BPTREE_
-	bptree* bt = new bptree(fanout);
-	for (int i = 1;i <= nodes; i++)
+	bptree* bt = new bptree(opt.fanout);
+	for (int i = 1;i <= opt.nr_keys; i++)
 	    bt->insert(i, mapping_t(NULL, 1000, 32));
 	bt->print();
+        bt->stats();
  	delete bt;
 #endif        
 

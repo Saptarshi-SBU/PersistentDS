@@ -27,6 +27,12 @@ class bptree {
         // constraint for number of keys
         int _k;
 
+        int _total_merges;
+
+        int _total_splits;
+
+        int _total_nodes;
+
     protected:
 
         // Node Operations : Split the Node to Create Siblings
@@ -77,6 +83,8 @@ class bptree {
         void print(void) const;
 
         blkptr_t lookup(const bkey_t);
+
+        void stats(void) const;
 
         bptree(int);
 

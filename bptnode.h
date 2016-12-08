@@ -53,8 +53,6 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
 
         int _level;
 
-        int _max_children;
-
 	public:
 
 	vector<index_t> _keys;
@@ -63,7 +61,7 @@ class bptnode_raw : public enable_shared_from_this<bptnode_raw> {
 
         index_t _max_cached, _min_cached;
 
-	bptnode_raw(shared_ptr<bptnode_raw> parent, int branch) : _max_children(branch), _parent(parent) { }
+	bptnode_raw(shared_ptr<bptnode_raw> parent, int level) : _parent(parent), _level(level) { }
 
         virtual ~bptnode_raw() {}
 
@@ -238,18 +236,16 @@ class bptnode_leaf : public bptnode_raw {
             throw exception();
         }
 
-        void update_chain(shared_ptr<bptnode_leaf> lchild,
-                shared_ptr<bptnode_leaf> rchild) {
+        void update_chain(shared_ptr<bptnode_leaf> prev,
+                shared_ptr<bptnode_leaf> next) {
 
-            if (lchild) {
-                this->_prev = lchild;
-                lchild->_next = shared_ptr<bptnode_leaf>(this);
-            }
+            //BUG FIX: do not assign shared pointer instances from 'this'
 
-            if (rchild) {
-                this->_next = rchild;
-                rchild->_prev = shared_ptr<bptnode_leaf>(this);
-            }
+            if (prev)
+                _prev = prev;
+
+            if (next)
+                _next = next;
         }
 
 	void print(void) {
