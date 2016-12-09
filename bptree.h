@@ -21,6 +21,9 @@ class bptree {
         // root node
         blkptr_t _rootp;
 
+        // leaf node
+        blkptr_leaf_t _headp, _tailp;
+
         // branch factor
         int _max_children;
 
@@ -73,6 +76,15 @@ class bptree {
 
         // Tree Ops : Tree traversal
         void _tree_level_traversal(const blkptr_t& node) const;
+
+        // Tree Ops : Linked-List Traversal
+        //
+        enum dir_t {
+            FORWARD,
+            REVERSE
+        };
+
+        void _tree_leaf_walk(blkptr_leaf_t node, dir_t) const;
 
     public:
 

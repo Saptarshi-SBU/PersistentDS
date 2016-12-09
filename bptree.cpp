@@ -27,6 +27,8 @@ bptree::bptree(int max) : _max_children(max) {
     else {
         // BUG FIX : First Node to be allocated in a B+ Tree is a leaf node
         _rootp = blkptr_t (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
+        _headp = LEAF(_rootp);
+        _tailp = LEAF(_rootp);
         _k = max/2;
         _total_merges = _total_splits = 0;
         _total_nodes = 1;
@@ -162,6 +164,18 @@ void bptree::_node_split(blkptr_t node) {
         // Update the leaf nodes link chain
         LEAF(lchildp)->update_chain(LEAF(node)->_prev, LEAF(rchildp));
         LEAF(rchildp)->update_chain(LEAF(lchildp), LEAF(node)->_next);
+
+        if (_headp == LEAF(node)) {
+            trace_record(debug, "head updated!");
+            _headp = LEAF(lchildp);
+        }
+        if (_tailp == LEAF(node)) {
+            trace_record(debug, "tail updated!");
+            _tailp = LEAF(rchildp);
+        }
+
+        //_tree_leaf_walk(LEAF(rchildp), REVERSE); 
+
         _total_nodes+=2;
 
         break;
@@ -661,12 +675,40 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
     }
 }
 
+void bptree::_tree_leaf_walk(blkptr_leaf_t node, dir_t dir) const {
+
+    int count_leaf = 0;
+
+    assert(node);
+
+    switch(dir) {
+    case REVERSE: 
+        while (node->_prev) {
+            node->print();
+            node = node->_prev;
+            count_leaf++;
+        }
+        break;
+
+    case FORWARD:
+        while (node->_next) {
+            node->print();
+            node = node->_next;
+            count_leaf++;
+        }
+        break;
+    }     
+    trace_record(debug, "total leaf nodes ", count_leaf);
+}    
+
 //Print API
 void bptree::print(void) const {
 
      if (_rootp) {
          _tree_print(_rootp);
          _tree_level_traversal(_rootp);
+         _tree_leaf_walk(_headp, FORWARD);
+         _tree_leaf_walk(_tailp, REVERSE);
      }
 }
 

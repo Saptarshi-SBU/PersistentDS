@@ -17,8 +17,10 @@
 #define _TEST_NODE_ 0
 #define _TEST_BPNODE_ 0
 #define _TEST_BPINTERNALNODE_ 0
-#define _TEST_TREE_ 0
 #define _TEST_BPTREE_ 1
+#define _FORWARD_DELETE_BPTREE 0
+#define _REVERSE_DELETE_BPTREE 0
+#define _TEST_TREE_ 0
 #define _TEST_DELETE_ 0
 #define _FORWARD_DELETE 0
 #define _REVERSE_DELETE 0
@@ -149,11 +151,31 @@ int main(int argc, char **argv) {
 
 #if _TEST_BPTREE_
 	bptree* bt = new bptree(opt.fanout);
+	auto t1 = std::chrono::high_resolution_clock::now();
 	for (int i = 1;i <= opt.nr_keys; i++)
 	    bt->insert(i, mapping_t(NULL, 1000, 32));
+	auto t2 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double, std::milli> ins_fp_ms = t2 - t1;
 	bt->print();
         bt->stats();
- 	delete bt;
+	cout << " insert : " << ins_fp_ms.count() << " msecs " << endl;
+#endif
+
+#if _TEST_DELETE_BPTREE
+
+#if _FORWARD_DELETE_BPTREE
+	auto t3 = std::chrono::high_resolution_clock::now();
+
+	for (int i = 1;i <= opt.nr_keys; i++) {
+#elif _REVERSE_DELETE_BPTREE
+	auto t3 = std::chrono::high_resolution_clock::now();
+
+	for (int i = opt.nr_keys;i >= 0; i--) {
+#endif
+		bt->remove(i);
+	}
+	auto t4 = std::chrono::high_resolution_clock::now();
+	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
 #endif        
 
 #if 0

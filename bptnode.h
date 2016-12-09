@@ -241,11 +241,15 @@ class bptnode_leaf : public bptnode_raw {
 
             //BUG FIX: do not assign shared pointer instances from 'this'
 
-            if (prev)
+            if (prev) {
                 _prev = prev;
+                prev->_next = LEAF(shared_from_this());
+            }    
 
-            if (next)
+            if (next) {
                 _next = next;
+                next->_prev = LEAF(shared_from_this());
+            }    
         }
 
 	void print(void) {
