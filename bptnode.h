@@ -9,6 +9,7 @@
 #define _BPTNODE_H
 
 #include <iostream>
+#include <string>
 #include <algorithm>
 #include <cassert>
 #include <stdexcept>
@@ -17,13 +18,23 @@
 #include <utility>
 #include <memory>
 #include "trace.h"
+#include "boost_logger.h"
 
 using namespace std;
 
-typedef unsigned long long index_t;
-
 #define LEAF(raw_node) static_pointer_cast<bptnode_leaf>(raw_node)
+
 #define INTERNAL(raw_node) static_pointer_cast<bptnode_internal>(raw_node)
+
+#define FMTLEVEL(x) (" level:" + to_string(x))
+
+#define FMTKEYS(x)  (" nr_keys:" + to_string(x))
+
+#define FMTCHILD(x) (" nr_child:" + to_string(x))
+
+#define FMTRANGE(x, y) ("<" + to_string(x) + "," + to_string(y) + ">")
+
+typedef unsigned long long index_t;
 
 template<class T>
 bool check_range(T value, T min, T max) {
@@ -165,8 +176,8 @@ class bptnode_internal : public bptnode_raw {
 
         bptnode_internal(shared_ptr<bptnode_internal> parent, int branch):
             bptnode_raw(parent, branch) {
-                _type = Internal;
-            }
+            _type = Internal;
+         }
 
         ~bptnode_internal() {
             _keys.clear();
@@ -180,11 +191,13 @@ class bptnode_internal : public bptnode_raw {
 
         int find_child(shared_ptr<bptnode_raw>& node) {
             auto it = std::find(_child.begin(), _child.end(), node);
-            return (it != _child.end()) ? std::distance(_child.begin(), it) : -1;
+            return (it != _child.end()) ?
+                std::distance(_child.begin(), it) : -1;
         }
 
         void remove_child(shared_ptr<bptnode_raw> node) {
-            _child.erase(std::remove(_child.begin(), _child.end(), node), _child.end());
+            _child.erase(std::remove(_child.begin(), _child.end(), node),
+                    _child.end());
             node->reset_parentp();
         }
 
@@ -200,8 +213,11 @@ class bptnode_internal : public bptnode_raw {
         }
 
         void print(void) {
-            trace_record(true, __func__, "level: ", _level, "<", _min_cached, ",", _max_cached, ">",
-                    "num keys: ", _num_keys(), " num child: ", _num_child());
+
+            BOOST_LOG_TRIVIAL(info) << __func__
+                    << FMTLEVEL(_level)
+                    << FMTRANGE(_min_cached, _max_cached)
+                    << FMTKEYS(_num_keys()) << FMTCHILD(_num_child());
         }
 };
 
@@ -276,8 +292,11 @@ class bptnode_leaf : public bptnode_raw {
         }
 
         void print(void) {
-            trace_record(true, __func__, "level: ", _level, "<", _min_cached, ",", _max_cached, ">",
-                    "num keys: ", _num_keys(), " num entry: ", _kv.size());
+
+            BOOST_LOG_TRIVIAL(info) << __func__
+                    << FMTLEVEL(_level)
+                    << FMTRANGE(_min_cached, _max_cached)
+                    << FMTKEYS(_num_keys());
         }
 };
 

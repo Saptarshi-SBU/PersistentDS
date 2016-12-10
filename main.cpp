@@ -7,12 +7,15 @@
 #include <chrono>
 #include <errno.h>
 #include <unistd.h>
+#include <getopt.h>
 
 #include "btnode.h"
 #include "btree.h"
 
 #include "bptnode.h"
 #include "bptree.h"
+
+#include "boost_logger.h"
 
 #define _TEST_NODE_ 0
 #define _TEST_BPNODE_ 0
@@ -38,27 +41,38 @@ int
 parse(int argc, char **argv, struct options* opt) {
 	int c = 0;
 
-	while ((c = getopt(argc, argv, "b:n:")) != -1) {
+        static struct option long_options[] = {
 
-        	switch(c) {
-       		case 'b':
-	    	if (optarg)
-                    opt->fanout = atoi(optarg);
-                break;
+            {"branch", required_argument, 0, 'b'},
 
-       		case 'n':
-	    	if (optarg)
-                    opt->nr_keys = atoi(optarg);
-                break;
-               
-                default:
-                cerr << "Usage : [-b] fanout [-n] number of keys " << endl;
-                return -EINVAL;
-               }        
+            {"nkey", required_argument, 0, 'n'},
+
+            {"file", required_argument, 0, 'f'}
+        };
+
+        int opt_index = 0;
+
+	while ((c = getopt_long(argc, argv, "b:n:",
+                        long_options, &opt_index)) != -1) {
+
+       	    switch(c) {
+       	    case 'b':
+	    if (optarg)
+                opt->fanout = atoi(optarg);
+            break;
+
+       	    case 'n':
+	    if (optarg)
+                opt->nr_keys = atoi(optarg);
+            break;
+
+            default:
+            cerr << "Usage : [-b] fanout [-n] nkey" << endl;
+            return -EINVAL;
+            }
         }
-
         return 0;
-}        
+}
 
 int main(int argc, char **argv) {
 
@@ -72,54 +86,75 @@ int main(int argc, char **argv) {
 		return -EINVAL;
 	}
 
+        // Set-Up Boost Logging
+        init_boost_logger();
+
 #if _TEST_NODE_
 
 	shared_ptr<btnode> node (new btnode());
 	for (int i = 0;i < 3; i++)
 		node->_insert_key(100 + i, value_t(NULL, 1000));
+
 	node->_insert_key(99, value_t(NULL, 1000));
-	node->_print();
+
 	int pos = node->_find_key(102);
-	cout << "Pos " << pos << endl;
 	auto v = node->_keysAt(pos);
-	cout << "Value " << v.second._off << endl;
-	cout << "Keys Size " << node->_num_keys() << endl;
+
+	node->_print();
+        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
+                                << "Value " << v.second._off;
+	                        << "Keys Size " << node->_num_keys();
+
 	for (int i = 0;i < 100; i++)
 		node->_remove_key(100 + i);
+
 	node->_print();
 #endif
 
 #if _TEST_BPNODE_
 
-	auto node = blkptr_leaf_t (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
+	auto node = blkptr_leaf_t 
+            (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
 	for (int i = 0;i < 3; i++)
 		node->insert_record(100 + i, mapping_t(NULL, 1000, 32));
+
 	node->insert_record(99, mapping_t(NULL, 1000, 32));
-	node->print();
+
 	int pos = node->find_key(102);
-	cout << "Pos " << pos << endl;
 	auto v = node->_keysAt(pos);
-	cout << "Value " << v << endl;
-	cout << "Keys Size " << node->_num_keys() << endl;
+
+	node->_print();
+        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
+                                << "Value " << v.second._off;
+	                        << "Keys Size " << node->_num_keys();
+
 	for (int i = 0;i < 100; i++)
 		node->remove_key(100 + i);
+
 	node->print();
 #endif
 
 #if _TEST_BPINTERNALNODE_
 
-	auto node = blkptr_internal_t (new bptnode_internal(blkptr_internal_t(nullptr), 0));
+	auto node = blkptr_internal_t 
+            (new bptnode_internal(blkptr_internal_t(nullptr), 0));
+
 	for (int i = 0;i < 3; i++)
-		node->insert_key(100 + i);//, mapping_t(NULL, 1000, 32));
-	node->insert_key(99);//, mapping_t(NULL, 1000, 32));
-	node->print();
+		node->insert_key(100 + i);
+
+	node->insert_key(99);
+
 	int pos = node->find_key(102);
-	cout << "Pos " << pos << endl;
 	auto v = node->_keysAt(pos);
-	cout << "Value " << v << endl;
-	cout << "Keys Size " << node->_num_keys() << endl;
+
+	node->_print();
+        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
+                                << "Value " << v.second._off;
+	                        << "Keys Size " << node->_num_keys();
+
 	for (int i = 0;i < 100; i++)
 		node->remove_key(100 + i);
+
 	node->print();
 #endif
 
@@ -159,7 +194,8 @@ int main(int argc, char **argv) {
 	std::chrono::duration<double, std::milli> ins_fp_ms = t2 - t1;
 	bt->print();
         bt->stats();
-	cout << " insert : " << ins_fp_ms.count() << " msecs " << endl;
+        
+        BOOST_LOG_TRIVIAL(info) << "insert : " << ins_fp_ms.count() << " msecs";
 #endif
 
 #if _TEST_DELETE_BPTREE
@@ -177,8 +213,8 @@ int main(int argc, char **argv) {
 	}
 	auto t4 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
-	cout << " delete : " << del_fp_ms.count() << " msecs " << endl;
-#endif        
+        BOOST_LOG_TRIVIAL(info) << "delete : " << del_fp_ms.count() << " msecs";
+#endif
 
 #if 0
 	cout << "################## Printing B-Tree Stats #####################" << endl;
