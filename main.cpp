@@ -19,9 +19,10 @@
 #define _TEST_BPINTERNALNODE_ 0
 #define _TEST_BPTREE_ 1
 #define _FORWARD_DELETE_BPTREE 0
-#define _REVERSE_DELETE_BPTREE 0
+#define _REVERSE_DELETE_BPTREE 1
+#define _TEST_DELETE_BPTREE 1
 #define _TEST_TREE_ 0
-#define _TEST_DELETE_ 0
+#define _TEST_DELETE_ 1
 #define _FORWARD_DELETE 0
 #define _REVERSE_DELETE 0
 
@@ -176,6 +177,7 @@ int main(int argc, char **argv) {
 	}
 	auto t4 = std::chrono::high_resolution_clock::now();
 	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
+	cout << " delete : " << del_fp_ms.count() << " msecs " << endl;
 #endif        
 
 #if 0

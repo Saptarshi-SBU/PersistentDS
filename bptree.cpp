@@ -72,18 +72,18 @@ blkptr_leaf_t bptree::_tree_get_leaf_node(const bkey_t key, blkptr_t& node) {
     blkptr_t next;
 
     if (!node) {
-        trace_record(debug, " leaf node not found!"); 
+        trace_record(debug, " leaf node not found!");
         return blkptr_leaf_t();
-    }    
+    }
 
     if (!(node->_num_child())) {
-        trace_record(debug, " leaf node found!"); 
+        trace_record(debug, " leaf node found!");
         return LEAF(node);
-    }    
+    }
 
     for (int i = 0; i < node->_num_child(); i++) {
         next = node->_childAt(i);
-        trace_record(debug, "max cached ", next->_max_cached);
+        //trace_record(debug, "max cached ", next->_max_cached);
         if (key > next->_max_cached)
             continue;
         break;
@@ -95,22 +95,22 @@ blkptr_leaf_t bptree::_tree_get_leaf_node(const bkey_t key, blkptr_t& node) {
 // To find internal node, which has references to a key in the leaf
 // This is needed to remove the reference and update it with the
 // next key in sucession in inorder fashion.
+//
+// The caller must ensure that the key is not in the root prior invoking
+// this function
 blkptr_internal_t bptree::_tree_get_internal_node(const bkey_t key, blkptr_t& node) {
 
     trace_record(debug, __func__);
 
     if (!node) {
-        trace_record(debug, " internal node not found!"); 
+        trace_record(debug, " internal node not found!");
         return blkptr_internal_t();
-    }    
-
-    // We should never reach the leaf
-    assert(node->_type == Leaf);
+    }
 
     if (node->find_key(key) > 0) {
-        trace_record(debug, " internal node found!"); 
+        trace_record(debug, " internal node found!");
         return INTERNAL(node);
-    }    
+    }
 
     for (int i = 0; i < node->_num_child(); i++) {
         auto node_in_range = node->_childAt(i);
@@ -118,6 +118,8 @@ blkptr_internal_t bptree::_tree_get_internal_node(const bkey_t key, blkptr_t& no
             continue;
         return _tree_get_internal_node(key, node_in_range);
     }
+
+    return blkptr_internal_t();
 }
 
 // Node Split Steps. We invoke this when a node fill reaches
@@ -174,7 +176,7 @@ void bptree::_node_split(blkptr_t node) {
             _tailp = LEAF(rchildp);
         }
 
-        //_tree_leaf_walk(LEAF(rchildp), REVERSE); 
+        //_tree_leaf_walk(LEAF(rchildp), REVERSE);
 
         _total_nodes+=2;
 
@@ -227,7 +229,7 @@ void bptree::_node_split(blkptr_t node) {
     if (_rootp == node) {
         trace_record(debug, " updating root!");
         _rootp = parentp;
-    }   
+    }
 
     //FIX : Compare shared_ptr prior reset
     node->reset_parentp();
@@ -278,9 +280,11 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
     //sanity rule check prior merge
     assert(parentp && (parentp->_num_child() >= 2));
 
-    assert(left && (lchildp->_num_keys() <= (_k - 1)));
+    // FIX : check constraint with the OR logic
+    assert((lchildp && (lchildp->_num_keys() < _k)) ||
+           (rchildp && (rchildp->_num_keys() < _k)));
 
-    assert(right && (rchildp->_num_keys() <= (_k - 1)));
+    parentp->print();
 
     blkptr_t merge_node;
 
@@ -289,7 +293,7 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
     int merge_level = lchildp->_get_level();
 
     // Allocate Merge Node
-    if (Internal == merge_type)
+    if (Leaf == merge_type)
         merge_node = blkptr_leaf_t (new bptnode_leaf(parentp, merge_level));
     else
         merge_node = blkptr_internal_t (new bptnode_internal(parentp, merge_level));
@@ -310,7 +314,10 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
         // Remove the duplicate key entry in the parent
         parentp->remove_key(rchildp->_min_cached);
 
-        trace_record(debug, __func__, " key removed from parent ", rchildp->_min_cached);
+        LEAF(lchildp)->print();
+        LEAF(rchildp)->print();
+        LEAF(merge_node)->print();
+        trace_record(debug, __func__, " leaf node key removed from parent ", rchildp->_min_cached);
         break;
     }
 
@@ -339,10 +346,22 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
         }
 
         // Remove the split key entry in the parent and add to the Merge Node
-        auto low = lower_bound(parentp->_keys.begin(),
+        // Note lower bound implementation is different than provided by STL implementation
+        auto low = _lower_bound(parentp->_keys.begin(),
                 parentp->_keys.end(), rchildp->_min_cached);
+
+        // XXX
+        parentp->print();
+        trace_record(debug, __func__, " key : ", rchildp->_min_cached, " lower bound key : ", *low);
+
         merge_node->insert_key(*low);
         parentp->remove_key(*low);
+
+        INTERNAL(lchildp)->print();
+        INTERNAL(rchildp)->print();
+        INTERNAL(merge_node)->print();
+
+        trace_record(debug, __func__, " internal node key removed from parent ", rchildp->_min_cached);
         break;
     }
 
@@ -355,55 +374,70 @@ blkptr_t bptree::_node_merge(blkptr_internal_t parentp, blkptr_t lchildp, blkptr
     parentp->remove_child(rchildp);
     parentp->insert_child(merge_node);
 
-    merge_node->set_parentp(parentp);
-
-    _total_merges++;
-
-
+    //FIX: Ensure we remove references to the existing parent
+    lchildp->reset_parentp();
+    rchildp->reset_parentp();
     lchildp.reset();
     rchildp.reset();
+
+    merge_node->set_parentp(parentp);
+    _total_merges++;
+
     return parentp;
 }
 
+//Stealing from left
 void bptree::_node_steal_from_lsibling(blkptr_t& curr, blkptr_t& parentp, blkptr_t& left) {
 
+    trace_record(debug, __func__);
+
      // Verify we meet the stealing Constraints
-    assert (curr && (curr->_num_keys() < (_k - 1)));
-    assert (left && (left->_num_keys() >= _k));
+     //
+    assert (curr && (curr->_num_keys() < _k));
+
+    assert (left && (left->_num_keys() > _k));
+
+    index_t steal_key;
 
     switch(curr->_type) {
     case Leaf: {
-        auto steal_key = left->_max_cached;
-        LEAF(curr)->insert_record(steal_key, LEAF(left)->_kv[steal_key]);
+
+        steal_key = left->_max_cached;
+
         parentp->remove_key(curr->_min_cached);
+
+        LEAF(curr)->insert_record(steal_key, LEAF(left)->_kv[steal_key]);
+        parentp->insert_key(curr->_min_cached);
+
         LEAF(left)->remove_key(steal_key);
-        parentp->insert_key(steal_key);
+
+        trace_record(debug, __func__, " stolen key from left sibling", steal_key);
         break;
     }
 
     case Root:
     case Internal: {
 
-        auto low = lower_bound(parentp->_keys.begin(),
+        // NB: for internal nodes child keys are excluded from parent
+        // Note lower bound implementation is different than provided by STL implementation
+        auto upper = _upper_bound(parentp->_keys.begin(),
                 parentp->_keys.end(), (const index_t)left->_max_cached);
 
-        parentp->remove_key(*low);
-        curr->insert_key(*low);
-        trace_record(debug, __func__ , " mid key : ", *low);
+        int pos = left->_num_child();
+        auto sib = left->_childAt(pos - 1);
 
-        // in-order predecessor in left child
-        auto high = lower_bound(left->_keys.begin(),
-                left->_keys.end(), left->_max_cached);
+        steal_key = *upper;
 
-        auto pos = high - left->_keys.begin();
+        parentp->remove_key(steal_key);
+        parentp->insert_key(left->_max_cached);
 
-        auto sibling = left->_childAt(pos + 1);
+        curr->insert_key(steal_key);
+        INTERNAL(curr)->insert_child(sib);
 
-        left->remove_key(*high);
-        parentp->insert_key(*high);
+        left->remove_key(left->_max_cached);
+        INTERNAL(left)->remove_child(sib);
 
-        INTERNAL(curr)->insert_child(sibling);
-        INTERNAL(left)->remove_child(sibling);
+        trace_record(debug, __func__, " stolen key from left sibling", steal_key);
         break;
     }
 
@@ -412,48 +446,54 @@ void bptree::_node_steal_from_lsibling(blkptr_t& curr, blkptr_t& parentp, blkptr
     }
 }
 
-void bptree::_node_steal_from_rsibling(blkptr_t& curr, blkptr_t& parentp, blkptr_t& right) {
+//Stealing from right
+void bptree::_node_steal_from_rsibling(blkptr_t& curr,
+        blkptr_t& parentp, blkptr_t& right) {
 
-    assert(curr && (curr->_num_keys() < (_k - 1)));
-    assert(right && (right->_num_keys() >= _k));
+    trace_record(debug, __func__);
 
-    // Commented bcoz parent can be root
-    //assert(parentp && (parentp->_num_keys() >= _k));
+    //Sanity
+    assert(curr && (curr->_num_keys() < _k));
+
+    assert(right && (right->_num_keys() > _k));
+
+    //assert(parentp && (parentp->_num_keys() > _k));
+
+    index_t steal_key;
 
     switch(curr->_type) {
-    case Leaf: {
-        auto steal_key = right->_min_cached;
+    case Leaf:
+
+        steal_key = right->_min_cached;
+
         LEAF(curr)->insert_record(steal_key, LEAF(right)->_kv[steal_key]);
         right->remove_key(steal_key);
+
         parentp->remove_key(steal_key);
         parentp->insert_key(right->_min_cached);
-        break;
-    }
 
+        trace_record(debug, __func__, " stolen key from right sibling", steal_key);
+        break;
     case Root:
     case Internal: {
-
-        auto low = lower_bound(parentp->_keys.begin(),
+        // NB: for internal nodes child keys are excluded from parent
+        // Note lower bound implementation is different than provided by STL implementation
+        auto low = _lower_bound(parentp->_keys.begin(),
                 parentp->_keys.end(), right->_min_cached);
 
-        curr->insert_key(*low);
-        parentp->remove_key(*low);
+        steal_key = *low;
+        auto sib = right->_childAt(0);
 
-        trace_record(debug, __func__ , " mid key : ", *low);
+        curr->insert_key(steal_key);
+        INTERNAL(curr)->insert_child(sib);
 
-        // in-order successor to parent node for RL-rotation
-        auto high = lower_bound(right->_keys.begin(),
-                right->_keys.end(), right->_min_cached);
+        parentp->remove_key(steal_key);
+        parentp->insert_key(right->_min_cached);
 
-        auto pos = high - right->_keys.begin();
+        right->remove_key(right->_min_cached);
+        INTERNAL(right)->remove_child(sib);
 
-        auto sibling = right->_childAt(pos);
-
-        right->remove_key(*high);
-        parentp->insert_key(*high);
-
-        INTERNAL(curr)->insert_child(sibling);
-        INTERNAL(right)->remove_child(sibling);
+        trace_record(debug, __func__, " stolen key from right sibling", steal_key);
         break;
     }
 
@@ -462,62 +502,78 @@ void bptree::_node_steal_from_rsibling(blkptr_t& curr, blkptr_t& parentp, blkptr
     }
 }
 
-// This is the member for checking any constraint violation and driving any
-// rebalancing operations if needed on the tree.
+// Tree Rebalancing Algorithm
+// Drive rebalancing operations if needed on the tree.
+//
 blkptr_t bptree::_tree_rebalance(blkptr_t curr) {
 
      assert (curr);
 
      int nr_keys = curr->_num_keys();
 
-     auto lambda = [] (int nr_key, int min, int max) {
-         return ((nr_key >= min) && (nr_key <= max));
-     };
+     // Check if rebalance required
+     if (_rootp == curr)
+         return curr;
+     else if (check_range(nr_keys, _k, _max_children - 1))
+         return curr;
+     else {
+         trace_record(debug, __func__, " :rebalance triggered ");
 
-     auto min = (curr->_type == Root) ? 0 : _k;
+         // Find the members participating in the rebalance
+         // parent and the siblings
+         auto prev_sib = blkptr_t(nullptr);
 
-     auto max = _max_children - 1;
+         auto next_sib = blkptr_t(nullptr);
 
-     if (lambda(curr->_num_keys(), min, max))
-        return curr;
+         auto parentp = curr->_parentp();
 
-     trace_record(debug, __func__, "rebalance triggered ");
+         // rebalance not required for root
+         assert(parentp);
 
-     // Find the members participating in the rebalance
-     auto parentp = curr->_parentp();
+         int iter = 0;
 
-     auto low = lower_bound(parentp->_keys.begin(),
-                parentp->_keys.end(), curr->_min_cached);
+         while (iter < INTERNAL(parentp)->_num_child()) {
+             // We locate the child node
+             // Now get nearby candidate siblings
+         if (INTERNAL(parentp)->_childAt(iter) == curr) {
+                 if (iter > 0)
+                     prev_sib = parentp->_childAt(iter - 1);
+                 if (iter < (INTERNAL(parentp)->_num_child() - 1))
+                     next_sib = parentp->_childAt(iter + 1);
+                 break;
+             }
+             iter++;
+         }
 
-     blkptr_t prev_sib, next_sib;
+         // Choose the type of rebalance needed
+         // +)Steal
+         // +)Merge
 
-     prev_sib = parentp->_childAt(low - parentp->_keys.begin());
-     if (prev_sib == curr)
-         prev_sib = blkptr_t(nullptr);
+         // Keys should be greater than the minimum to able to steal
+         if (prev_sib && (prev_sib->_num_keys() > _k)) {
+             // Steal from left Child
+             _node_steal_from_lsibling(curr, parentp, prev_sib);
 
-     next_sib = parentp->_childAt(low - parentp->_keys.begin());
-     if (next_sib == curr)
-         next_sib = blkptr_t(nullptr);
+         } else if (next_sib && (next_sib->_num_keys() > _k)) {
+            // Steal from right child
+            _node_steal_from_rsibling(curr, parentp, next_sib);
 
-    // Choose the type of rebalance needed
-     if (prev_sib && (prev_sib->_num_keys() >= _k)) {
-         // Steal from left Child
-        _node_steal_from_lsibling(curr, parentp, prev_sib);
-     } else if (next_sib && (next_sib->_num_keys() >= _k)) {
-         // Steal from right child
-        _node_steal_from_rsibling(curr, parentp, next_sib);
-     } else {
-         // insufficient sibling keys. Merge is needed
-         if (prev_sib == curr)
-              parentp = _node_merge(INTERNAL(parentp), curr, next_sib);
-         else
-              parentp = _node_merge(INTERNAL(parentp), prev_sib, curr);
+         } else {
+            // insufficient sibling keys. Merge is needed
+            // FIX : check for null
+            if (next_sib)
+                parentp = _node_merge(INTERNAL(parentp), curr, next_sib);
+            else if (prev_sib)
+                parentp = _node_merge(INTERNAL(parentp), prev_sib, curr);
+            else
+                assert(0);
 
-         // merge may trigger next round of rebalance
-         parentp = _tree_rebalance(parentp);
+            // merge may trigger next round of rebalance
+            parentp = _tree_rebalance(parentp);
+         }
+
+         return parentp;
      }
-
-     return parentp;
 }
 
 // B+-Tree Key Deletion Algorithm
@@ -530,19 +586,28 @@ void bptree::_tree_delete(const bkey_t key) {
 
     auto curr = _tree_lookup(key, _rootp);
     if (!curr) {
-        trace_record(debug, __func__, "ERR btkey ", key, " not found ");
+        trace_record(debug, __func__, "ERR key ", key, " not found ");
         return;
     }
 
     auto leaf = _tree_get_leaf_node(key, _rootp);
     assert(leaf && leaf->_type == Leaf);
     leaf->remove_key(key);
+    trace_record(debug, __func__, " leaf node key removed ", key);
 
-   // Drop any associated references if any and update with new one
+    if (leaf == LEAF(_rootp)) {
+        if (!_rootp->_num_keys())
+            _rootp.reset();
+        return;
+    }
+
+    // Drop any associated references if any and update with new one
     auto internal = _tree_get_internal_node(key, _rootp);
+    // We may or may not have internal node with the key
     if (internal) {
         internal->remove_key(key);
         internal->insert_key(leaf->_min_cached);
+        trace_record(debug, __func__, " parent node key removed ", key);
     }
 
     auto node = _tree_rebalance(leaf);
@@ -551,10 +616,10 @@ void bptree::_tree_delete(const bkey_t key) {
     if (node == _rootp) {
         // Root is Empty
         if (!node->_num_keys()) {
+            _rootp.reset();
             // Pending Child becomes the new root
             if (node->_num_child())
                _rootp = node->_childAt(0);
-            _rootp.reset();
         }
     }
 }
@@ -562,20 +627,22 @@ void bptree::_tree_delete(const bkey_t key) {
 //B+-Tree LookUp Algorithm
 blkptr_t bptree::_tree_lookup(const bkey_t key, blkptr_t node) {
 
-    assert (node);
+    assert(node);
 
-    trace_record(debug, __func__, "lookup node <", node->_min_cached, ",", node->_max_cached, ">");
+    trace_record(debug, __func__, " range <", node->_min_cached,
+            ",", node->_max_cached, ">");
 
-    if (!node->_num_child() && (node->find_key(key) > 0))
+    if ((!(node->_num_child())) && (node->find_key(key) >= 0)) {
         return node;
-    else if (!node->_num_child())
+    } else if (!(node->_num_child())) {
+        trace_record(debug, __func__, " key not found ", key);
         return blkptr_t(nullptr);
-    else {
-        for (int i = 0; i < node->_num_child(); i++) {
-            auto child = node->_childAt(i);
-            if ((key >= child->_min_cached) && key <= child->_max_cached)
-                return _tree_lookup(key, child);
-        }
+    } else {
+        int i;
+        for (i = 0; i < node->_num_keys(); i++)
+        if (key < node->_keysAt(i))
+                return _tree_lookup(key, node->_childAt(i));
+        return _tree_lookup(key, node->_childAt(i));
     }
 }
 
@@ -645,7 +712,7 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
         if (bFlag) {
             trace_record(debug, __func__, " Level : ", p->_get_level()," Nodes : ", n1);
             bFlag = false;
-        }     
+        }
 
         while (q2.size()) {
             p = q2.front();
@@ -670,7 +737,7 @@ void bptree::_tree_level_traversal(const blkptr_t& node) const {
         if (bFlag) {
             trace_record(debug, __func__, " Level : ", p->_get_level()," Nodes : ", n2);
             bFlag = false;
-        }     
+        }
 
     }
 }
@@ -682,7 +749,7 @@ void bptree::_tree_leaf_walk(blkptr_leaf_t node, dir_t dir) const {
     assert(node);
 
     switch(dir) {
-    case REVERSE: 
+    case REVERSE:
         while (node->_prev) {
             node->print();
             node = node->_prev;
@@ -697,9 +764,9 @@ void bptree::_tree_leaf_walk(blkptr_leaf_t node, dir_t dir) const {
             count_leaf++;
         }
         break;
-    }     
+    }
     trace_record(debug, "total leaf nodes ", count_leaf);
-}    
+}
 
 //Print API
 void bptree::print(void) const {
