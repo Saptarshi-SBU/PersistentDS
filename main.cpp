@@ -17,6 +17,8 @@
 
 #include "boost_logger.h"
 
+#include "vlinklist.hpp"
+
 #define _TEST_NODE_ 0
 #define _TEST_BPNODE_ 0
 #define _TEST_BPINTERNALNODE_ 0
@@ -28,6 +30,7 @@
 #define _TEST_DELETE_ 1
 #define _FORWARD_DELETE 0
 #define _REVERSE_DELETE 0
+#define _STORAGE_ALLOCATOR 1
 
 #define DEFAULT_BRANCH_FACTOR 3
 #define DEFAULT_NUM_KEYS 1
@@ -114,7 +117,7 @@ int main(int argc, char **argv) {
 #if _TEST_BPNODE_
 
 	auto node = blkptr_leaf_t 
-            (new bptnode_leaf(blkptr_internal_t(nullptr), 0));
+            (new bptnode_leaf(blkptr_internal_t(nullptr), 0, 0));
 	for (int i = 0;i < 3; i++)
 		node->insert_record(100 + i, mapping_t(NULL, 1000, 32));
 
@@ -137,7 +140,7 @@ int main(int argc, char **argv) {
 #if _TEST_BPINTERNALNODE_
 
 	auto node = blkptr_internal_t 
-            (new bptnode_internal(blkptr_internal_t(nullptr), 0));
+            (new bptnode_internal(blkptr_internal_t(nullptr), 0, 0));
 
 	for (int i = 0;i < 3; i++)
 		node->insert_key(100 + i);
@@ -216,10 +219,7 @@ int main(int argc, char **argv) {
         BOOST_LOG_TRIVIAL(info) << "delete : " << del_fp_ms.count() << " msecs";
 #endif
 
-#if 0
-	cout << "################## Printing B-Tree Stats #####################" << endl;
-	cout << " insert : " << ins_fp_ms.count() << " msecs " << endl;
-	cout << " delete : " << del_fp_ms.count() << " msecs " << endl;
-	return 0;
+#if _STORAGE_ALLOCATOR
+    TestPersistentLinkList();
 #endif
 }

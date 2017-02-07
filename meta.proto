@@ -1,0 +1,15 @@
+package db;
+
+message spacemaprecord {
+    
+   required uint64 base = 1 [default = 0];
+   required uint64 size = 2 [default = 0];
+
+   enum RecordType {
+      ALLOCATE = 0;
+      DEALLOCATE = 1;
+      FREE = 2;
+   }
+
+   required RecordType alloc = 3 [default = FREE];
+}
