@@ -8,70 +8,91 @@
 #include <errno.h>
 #include <unistd.h>
 #include <getopt.h>
+#include <string>
 
 #include "btnode.h"
 #include "btree.h"
 
 #include "bptnode.h"
 #include "bptree.h"
+#include "vlinklist.hpp"
 
 #include "boost_logger.h"
 
-#include "vlinklist.hpp"
+const char* dbfile = "log.txt";
+size_t dbsize = 1024*1024*1024;
 
-#define _TEST_NODE_ 0
-#define _TEST_BPNODE_ 0
-#define _TEST_BPINTERNALNODE_ 0
-#define _TEST_BPTREE_ 1
-#define _FORWARD_DELETE_BPTREE 0
-#define _REVERSE_DELETE_BPTREE 1
-#define _TEST_DELETE_BPTREE 1
-#define _TEST_TREE_ 0
-#define _TEST_DELETE_ 1
-#define _FORWARD_DELETE 0
-#define _REVERSE_DELETE 0
-#define _STORAGE_ALLOCATOR 1
-
-#define DEFAULT_BRANCH_FACTOR 3
-#define DEFAULT_NUM_KEYS 1
+//Supported Data-Structures
+typedef enum {
+    LINKLIST,
+    BTREE,
+    BPTREE
+}PERSISTENCE_FORMAT;
 
 struct options {
-	int fanout;
-	int nr_keys;
+   PERSISTENCE_FORMAT type;
+   bool create;
+   bool clear;
+   bool add;
+   bool erase;
+   int key;
+   bool print;
 };
 
 int
 parse(int argc, char **argv, struct options* opt) {
 	int c = 0;
+        int opt_index = 0;
 
         static struct option long_options[] = {
 
-            {"branch", required_argument, 0, 'b'},
+             //Features we support
 
-            {"nkey", required_argument, 0, 'n'},
+            {"type", required_argument, 0, 't'},
 
-            {"file", required_argument, 0, 'f'}
+            {"create", optional_argument, 0, 'c'},
+
+            {"delete", optional_argument, 0, 'd'},
+
+            {"add", optional_argument, 0, 'a'},
+
+            {"remove", optional_argument, 0, 'r'},
+
+            {"print", optional_argument, 0, 'p'}
         };
 
-        int opt_index = 0;
-
-	while ((c = getopt_long(argc, argv, "b:n:",
+	while ((c = getopt_long(argc, argv, "t:a:r:cdp",
                         long_options, &opt_index)) != -1) {
 
        	    switch(c) {
-       	    case 'b':
-	    if (optarg)
-                opt->fanout = atoi(optarg);
-            break;
-
-       	    case 'n':
-	    if (optarg)
-                opt->nr_keys = atoi(optarg);
-            break;
-
+       	    case 't': {
+                    std::vector<std::string> v{"list", "bptree", "btree"};
+                    auto it = std::find(v.begin(), v.end(), optarg);
+                    if (it == v.end())
+                        return -1;
+                    opt->type = static_cast<PERSISTENCE_FORMAT>(it - v.begin());
+                    break;
+                }
+       	    case 'c':
+                opt->create = true;
+                break;
+       	    case 'd':
+                opt->clear = true;
+                break;
+       	    case 'a':
+                opt->add = true;
+                opt->key = atoi(optarg);
+                break;
+       	    case 'r':
+                opt->erase = true;
+                opt->key = atoi(optarg);
+                break;
+       	    case 'p':
+                opt->print = true;
+                break;
             default:
-            cerr << "Usage : [-b] fanout [-n] nkey" << endl;
-            return -EINVAL;
+                cerr << "Usage : [--create] [--type] type" << endl;
+                return -1;
             }
         }
         return 0;
@@ -79,147 +100,54 @@ parse(int argc, char **argv, struct options* opt) {
 
 int main(int argc, char **argv) {
 
-	struct options opt = { DEFAULT_BRANCH_FACTOR,DEFAULT_NUM_KEYS };
+	struct options opt;
+        bzero((char*)&opt, sizeof(opt));
+
+        if (argc < 3) {
+                cerr << "Usage : [--create] [--type] type" << endl;
+		return -EINVAL;
+        }
 
 	if (parse(argc, argv, &opt) < 0)
-		return -1;
-
-	if (opt.fanout < 3) {
-		cout << "invalid argument : min b-tree fanout is 3 " << endl;
 		return -EINVAL;
-	}
 
         // Set-Up Boost Logging
         init_boost_logger();
 
-#if _TEST_NODE_
+        BOOST_LOG_TRIVIAL(info)
+            << " --type " << opt.type
+            << " --create " << opt.create
+            << " --delete " << opt.clear
+            << " --add " << opt.add
+            << " --remove " << opt.erase
+            << " --key " << opt.key
+            << " --print " << opt.print;
 
-	shared_ptr<btnode> node (new btnode());
-	for (int i = 0;i < 3; i++)
-		node->_insert_key(100 + i, value_t(NULL, 1000));
+        // Init Storage Media
+        StorageResource sink(std::string(dbfile), dbsize);
+        boost::shared_ptr<CoreIO> io = boost::shared_ptr<CoreIO>(new CoreIO(sink));
+        boost::shared_ptr<StorageAllocator> allocator =
+            boost::shared_ptr<StorageAllocator>(new StorageAllocator(sink, 0, sink.size()));
 
-	node->_insert_key(99, value_t(NULL, 1000));
+        if (LINKLIST == opt.type) {
+           typedef PersistentLinkList<int, CoreIO, StorageAllocator> PMemLinkList;
+           boost::shared_ptr<PMemLinkList> pList;
 
-	int pos = node->_find_key(102);
-	auto v = node->_keysAt(pos);
+           //Create Link List or get Handle
+           pList = boost::shared_ptr<PMemLinkList>(new PMemLinkList(io, allocator));
 
-	node->_print();
-        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
-                                << "Value " << v.second._off;
-	                        << "Keys Size " << node->_num_keys();
+           if (opt.clear)
+               pList->clear();
 
-	for (int i = 0;i < 100; i++)
-		node->_remove_key(100 + i);
+           if (opt.add)
+               pList->push_back(opt.key);
 
-	node->_print();
-#endif
+           if (opt.erase)
+               pList->pop_back();
 
-#if _TEST_BPNODE_
+           if (opt.print)
+               pList->print();
+        }
 
-	auto node = blkptr_leaf_t 
-            (new bptnode_leaf(blkptr_internal_t(nullptr), 0, 0));
-	for (int i = 0;i < 3; i++)
-		node->insert_record(100 + i, mapping_t(NULL, 1000, 32));
-
-	node->insert_record(99, mapping_t(NULL, 1000, 32));
-
-	int pos = node->find_key(102);
-	auto v = node->_keysAt(pos);
-
-	node->_print();
-        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
-                                << "Value " << v.second._off;
-	                        << "Keys Size " << node->_num_keys();
-
-	for (int i = 0;i < 100; i++)
-		node->remove_key(100 + i);
-
-	node->print();
-#endif
-
-#if _TEST_BPINTERNALNODE_
-
-	auto node = blkptr_internal_t 
-            (new bptnode_internal(blkptr_internal_t(nullptr), 0, 0));
-
-	for (int i = 0;i < 3; i++)
-		node->insert_key(100 + i);
-
-	node->insert_key(99);
-
-	int pos = node->find_key(102);
-	auto v = node->_keysAt(pos);
-
-	node->_print();
-        BOOST_LOG_TRIVIAL(info) << "Pos " << pos
-                                << "Value " << v.second._off;
-	                        << "Keys Size " << node->_num_keys();
-
-	for (int i = 0;i < 100; i++)
-		node->remove_key(100 + i);
-
-	node->print();
-#endif
-
-#if _TEST_TREE_
-	btree* bt = new btree(opt.fanout);
-
-	auto t1 = std::chrono::high_resolution_clock::now();
-	for (int i = 1;i <= opt.nr_keys; i++) {
-		bt->_insert(i, value_t(NULL, 1000));
-	}
-	auto t2 = std::chrono::high_resolution_clock::now();
-	bt->_print();
-	std::chrono::duration<double, std::milli> ins_fp_ms = t2 - t1;
-#if _TEST_DELETE_
-
-	auto t3 = std::chrono::high_resolution_clock::now();
-#if _FORWARD_DELETE
-	for (int i = 1;i <= opt.nr_keys; i++) {
-#elif _REVERSE_DELETE
-	for (int i = opt.nr_keys;i >= 0; i--) {
-#endif
-		bt->_delete(i);
-	}
-	auto t4 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
-#endif
-	bt->_print();
- 	delete bt;
-#endif
-
-#if _TEST_BPTREE_
-	bptree* bt = new bptree(opt.fanout);
-	auto t1 = std::chrono::high_resolution_clock::now();
-	for (int i = 1;i <= opt.nr_keys; i++)
-	    bt->insert(i, mapping_t(NULL, 1000, 32));
-	auto t2 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double, std::milli> ins_fp_ms = t2 - t1;
-	bt->print();
-        bt->stats();
-        
-        BOOST_LOG_TRIVIAL(info) << "insert : " << ins_fp_ms.count() << " msecs";
-#endif
-
-#if _TEST_DELETE_BPTREE
-
-#if _FORWARD_DELETE_BPTREE
-	auto t3 = std::chrono::high_resolution_clock::now();
-
-	for (int i = 1;i <= opt.nr_keys; i++) {
-#elif _REVERSE_DELETE_BPTREE
-	auto t3 = std::chrono::high_resolution_clock::now();
-
-	for (int i = opt.nr_keys;i >= 0; i--) {
-#endif
-		bt->remove(i);
-	}
-	auto t4 = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<double, std::milli> del_fp_ms = t4 - t3;
-        BOOST_LOG_TRIVIAL(info) << "delete : " << del_fp_ms.count() << " msecs";
-#endif
-
-#if _STORAGE_ALLOCATOR
-    TestPersistentLinkList();
-#endif
+        return 0;
 }

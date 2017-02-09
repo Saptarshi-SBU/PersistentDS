@@ -66,17 +66,17 @@ class MappedRegion : public boost::enable_shared_from_this<MappedRegion> {
 };
 
 #define RECORD_SIGNATURE (0xdeadface)
-#define SPACEMAPREGIONSIZE (1024)
+#define SPACEMAPREGIONSIZE (1024*1024)
 #define METASLAB_SIZE (1024*1024*1024)
 
 class MetaSlab : public MappedRegion {
 
     public:
-            
+
       class SpaceMap {
 
           public:
-            
+
             class SpaceMapRecord {
 
                 public:
@@ -84,8 +84,8 @@ class MetaSlab : public MappedRegion {
                 // Note : required protobuf fields are set to default
                 SpaceMapRecord() { magic = RECORD_SIGNATURE; size = 0; }
 
-                //When you delegate the member initialization to another constructor, 
-                //there is an assumption that the other constructor initializes the 
+                //When you delegate the member initialization to another constructor,
+                //there is an assumption that the other constructor initializes the
                 //object completely, including all members
                 SpaceMapRecord(off_t base, size_t size, db::spacemaprecord::RecordType alloc) {
                     rc.set_base(base);
@@ -114,19 +114,20 @@ class MetaSlab : public MappedRegion {
                         pos+=length;
                         length = sizeof(size_t);
                         core->Read(pos, (char*)&size, length);
+                        std::cout << pos << ":" << size << ":" << length << std::endl;
                         assert(size);
                         char *buf = new char[size];
                         pos+=length;
                         length = size;
                         core->Read(pos, buf, length);
-                        deserialize(std::string(buf, size));    
+                        deserialize(std::string(buf, size));
                         pos+=length;
                         delete buf;
-                    } else 
+                    } else
                         magic = 0;
 
                     return pos - start;
-                }    
+                }
 
                 size_t Write(off_t start, boost::shared_ptr<CoreIO>& core) {
                     off_t pos = start;
@@ -144,7 +145,7 @@ class MetaSlab : public MappedRegion {
                     core->Write(pos, buf.c_str(), length);
                     pos+=length;
                     return pos - start;
-                }    
+                }
 
                 unsigned int magic;
                 size_t size; // record length
@@ -164,27 +165,41 @@ class MetaSlab : public MappedRegion {
            // in-memory tree for spacemap deallocations
            std::map<uint64_t, SpaceMap::SpaceMapRecord> _free_map;
 
-           off_t _start; // space-map log region start 
+           off_t _start; // space-map log region start
            size_t _size; // space-map log region size
       };
 
 
-      MetaSlab(off_t start, size_t size, boost::shared_ptr<CoreIO> core) : 
+      MetaSlab(off_t start, size_t size, boost::shared_ptr<CoreIO> core) :
           MappedRegion(start, size),
          _log_size(SPACEMAPREGIONSIZE), _cursor(start), _cachedSize(size), _core(core) {
 
-         _id = _base % _size;           
+         _id = _base % _size;
          _spacemap.reset(new SpaceMap(_base, _log_size));
-         
+
          // Update from on-disk Log
          while (_cursor < (start + _log_size)) {
             SpaceMap::SpaceMapRecord rec;
-            if (!rec.Read(_cursor, _core))
+            auto n = rec.Read(_cursor, _core);
+            BOOST_LOG_TRIVIAL(info) << "Space-Map record size :" << n;
+            if (0 == n)
                 break;
-            _spacemap->_alloc_map[rec.rc.base()] = rec;
-            _cachedSize-=rec.rc.size();
-            _cursor+=rec.rc.size();
-            std::cout << "On-Disk Space-Map Record " << rec.DebugString() << std::endl;
+            if (rec.rc.alloc() == db::spacemaprecord::ALLOCATE) {
+               _spacemap->_alloc_map[rec.rc.base()] = rec;
+                auto it = _spacemap->_free_map.find(rec.rc.base());
+                if (it != _spacemap->_free_map.end())
+                    _spacemap->_free_map.erase(it);
+               _cachedSize-=rec.rc.size();
+            } else {
+               _spacemap->_free_map[rec.rc.base()] = rec;
+                auto it = _spacemap->_alloc_map.find(rec.rc.base());
+                if (it != _spacemap->_alloc_map.end())
+                    _spacemap->_alloc_map.erase(it);
+                if (rec.rc.alloc() == db::spacemaprecord::DEALLOCATE)
+                   _cachedSize+=rec.rc.size();
+            }
+           _cursor+=n;
+            BOOST_LOG_TRIVIAL(info) << "On-Disk Space-Map Record " << rec.DebugString();
          }
 
          // else Initialize New Map
@@ -192,8 +207,10 @@ class MetaSlab : public MappedRegion {
              SpaceMap::SpaceMapRecord rec(_base + _log_size, size, db::spacemaprecord::FREE);
             _cursor+=rec.Write(_cursor, _core);
             _spacemap->_free_map[rec.rc.base()] = rec;
-             std::cout << "Creating Space-Map Record" << rec.DebugString() << std::endl;
-         }    
+             BOOST_LOG_TRIVIAL(info) << "Creating Space-Map Record" << rec.DebugString();
+         }
+
+         BOOST_LOG_TRIVIAL(info) << "MetaSlab Avaliable Space " << _cachedSize;
       }
 
       ~MetaSlab() {
@@ -201,7 +218,7 @@ class MetaSlab : public MappedRegion {
           _core.reset();
       }
 
-      // Get from in-memory tree 
+      // Get from in-memory tree
       std::pair<off_t, size_t>Allocate(std::string::size_type size) {
          for (auto it : _spacemap->_free_map) {
             if (it.second.rc.size() >= size) {
@@ -209,25 +226,26 @@ class MetaSlab : public MappedRegion {
                SpaceMap::SpaceMapRecord rec(it.second.rc.base(), size, db::spacemaprecord::ALLOCATE);
               _cursor+=rec.Write(_cursor, _core);
                // Update tree
-               _spacemap->_free_map.erase(rec.rc.base());
-               _spacemap->_alloc_map[rec.rc.base()] = rec;
+              _spacemap->_free_map.erase(rec.rc.base());
+              _spacemap->_alloc_map[rec.rc.base()] = rec;
                std::cout << rec.DebugString() << std::endl;
 
                // Create New DeAllocation record
                auto new_pos = it.second.rc.base() + size;
                auto new_size = it.second.rc.size() - size;
-               SpaceMap::SpaceMapRecord new_rec(it.second.rc.base() + size, 
+               SpaceMap::SpaceMapRecord new_rec(it.second.rc.base() + size,
                        it.second.rc.size() - size, db::spacemaprecord::FREE);
-               _cursor+=new_rec.Write(_cursor, _core); 
+              _cursor+=new_rec.Write(_cursor, _core);
                // Update tree
-               _spacemap->_free_map[new_pos] = new_rec;
+              _spacemap->_free_map[new_pos] = new_rec;
                std::cout << new_rec.DebugString() << std::endl;
 
-               _cachedSize-=size;
+              _cachedSize-=size;
                return std::pair<off_t, size_t>(rec.rc.base(), rec.rc.size());
              }
-         }    
-         return std::pair<off_t, size_t> (0,0);
+         }
+         BOOST_LOG_TRIVIAL(error) << "SpaceMap First Fit failed to find any entry";
+         throw std::bad_alloc();
       }
 
       void DeAllocate(off_t start, size_t size) {
@@ -279,36 +297,38 @@ class StorageAllocator
        }
 
        std::pair<off_t, size_t> Allocate(std::string::size_type n, void* hint = 0) {
-          std::cout << __func__ << " request size: " << n << std::endl; 
+          BOOST_LOG_TRIVIAL(info) << __func__ << " request size: " << n;
           for (auto it : _mslabs) {
              if (it->_cachedSize > n) {
                 auto result = it->Allocate(n);
                 if (result.second)
                    return result;
                 }
+                assert(0);
           }
-          return std::pair<off_t, size_t>(0, 0);
+          BOOST_LOG_TRIVIAL(error) << "Metaslab: No Free region";
+          throw std::bad_alloc();
        }
- 
+
        void DeAllocate(off_t start, size_t size) {
-          std::cout << __func__ << " freed size: " << size << std::endl; 
+          BOOST_LOG_TRIVIAL(info) << __func__ << " freed size: " << size;
           for (auto it : _mslabs) {
-              if ((it->_base < start) && 
+              if ((it->_base < start) &&
                   (it->_base + it->_size) > (start + size)) {
                   it->DeAllocate(start, size);
                   break;
-              }    
-          }    
+              }
+          }
        }
 };
 
 void TestIODevice(void) {
     StorageResource sink(std::string("log.txt"), 4096);
-    CoreIO core(sink);   
+    CoreIO core(sink);
     size_t size = 0xdeadbeef;
     core.Write(0, (char*)&size, sizeof(size));
     size = 0;
     core.Read(0, (char*)&size, sizeof(size));
     std::cout << std::hex << size << std::endl;
     std::cout << core.tellg() << std::endl;
-}    
+}
