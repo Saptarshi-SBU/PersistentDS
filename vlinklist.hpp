@@ -172,7 +172,7 @@ class PersistentLinkList {
        void BuildList(void) {
 
            if (!_header->_meta._phys_next) {
-              std::cout << "No List entry found!" << std::endl;
+              BOOST_LOG_TRIVIAL(error) << "No List entry found!";
               return;
            }
 
@@ -183,22 +183,25 @@ class PersistentLinkList {
           _core->Read(_header->_meta._phys_next, rbuf, size);
           _head->deserialize(rbuf, size);
 
-           // Next search list entries
+           // Next populate all entries
+           size_t count = 0;
            Iterator it(_head);
-           for(int i = 0; i < _header->_meta._nr_elements; it = it.Next(_core), i++) {
+           do {
                auto node = it.get();
-               if (node->data._op == LinkListNode<T>::APPEND)
-                  _list.push_back(node);
-               else
-                  _list.remove(node);
-               //std::cout << "node entry: " << node->DebugString() << std::endl;
-           }
+               _list.push_back(node);
+               count++;
+               if (!it.hasNext())
+                   break;
+               it = it.Next(_core);
+           } while (count < _header->_meta._nr_elements);
+           assert (count == _header->_meta._nr_elements);
+           //std::cout << "node entry: " << node->DebugString() << std::endl;
            return;
        }
 
        PersistentLinkList(boost::shared_ptr<IO> core, boost::shared_ptr<Allocator> alloc) : _core(core), _allocator(alloc) {
            _header.reset(new Header(*this));
-           std::cout << _header->DebugString() << std::endl;
+           BOOST_LOG_TRIVIAL(info) << _header->DebugString();
            if (_header->_meta._nr_elements)
               BuildList();
        }
@@ -236,23 +239,22 @@ class PersistentLinkList {
            _core->Write(node->data._phys_curr, pbuf, size);
            _core->Write(_header->_meta._phys_curr, dbuf, dsize);
            _list.push_back(node);
-           BOOST_LOG_TRIVIAL(info) << "node pushed: " << node->DebugString();
+            BOOST_LOG_TRIVIAL(info) << "node pushed: " << node->DebugString();
        }
 
        void pop_back(void) {
 
            if (!_header->_meta._phys_next) {
-              std::cout << "No List entry found!" << std::endl;
+              BOOST_LOG_TRIVIAL(info) << "No List entry found!";
               return;
            }
 
            boost::shared_ptr<LinkListNode<T>> tail;
-
-           Iterator it(_head);
-           for(int i = 0; i < _header->_meta._nr_elements; it = it.Next(_core), i++) {
-               auto node = it.get();
-               if (node->data._op == LinkListNode<T>::APPEND)
-                   tail = node;
+           for (auto iter = _list.rbegin(); iter != _list.rend(); iter++) {
+              if ((*iter)->data._op == LinkListNode<T>::APPEND) {
+                 tail = (*iter);
+                 break;
+              }
            }
 
            // Note we do not update header
@@ -262,8 +264,7 @@ class PersistentLinkList {
               tail->data._op = LinkListNode<T>::ERASE;
               tail->serialize(buf, size);
              _core->Write(tail->data._phys_curr, buf, size);
-             _list.remove(tail);
-              tail.reset();
+              BOOST_LOG_TRIVIAL(info) << "node removed: " << tail->DebugString();
            }
        }
 
@@ -309,8 +310,10 @@ class PersistentLinkList {
        }
 
        void print(void) const {
-          for (auto i : _list)
-             std::cout << i->DebugString() << std::endl;
+          BOOST_LOG_TRIVIAL(info) << "------Linked List Dump--------";
+          for (auto &i : _list)
+             if(i->data._op == LinkListNode<T>::APPEND)
+                std::cout << i->DebugString() << std::endl;
        }
 };
 

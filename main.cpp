@@ -61,7 +61,7 @@ parse(int argc, char **argv, struct options* opt) {
             {"print", optional_argument, 0, 'p'}
         };
 
-	while ((c = getopt_long(argc, argv, "t:a:r:cdp",
+	while ((c = getopt_long(argc, argv, "t:a:rcdp",
                         long_options, &opt_index)) != -1) {
 
        	    switch(c) {
@@ -81,11 +81,13 @@ parse(int argc, char **argv, struct options* opt) {
                 break;
        	    case 'a':
                 opt->add = true;
-                opt->key = atoi(optarg);
+                if (optarg)
+                   opt->key = atoi(optarg);
+                else
+                   return -EINVAL;
                 break;
        	    case 'r':
                 opt->erase = true;
-                opt->key = atoi(optarg);
                 break;
        	    case 'p':
                 opt->print = true;
@@ -104,7 +106,7 @@ int main(int argc, char **argv) {
         bzero((char*)&opt, sizeof(opt));
 
         if (argc < 3) {
-                cerr << "Usage : [--create] [--type] type" << endl;
+                cerr << "Usage : [--type] type [--create] [--delete] [-add] [--remove] [--print]" << endl;
 		return -EINVAL;
         }
 
