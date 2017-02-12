@@ -275,35 +275,30 @@ class PersistentLinkList {
              return;
           }
 
-          const size_t size = sizeof(_head->data);
-
           // Compute Region Size to Free;
+          const size_t size = sizeof(_head->data);
           const size_t total_size = _header->_meta._nr_elements * size;
 
-          // Update Header
           const size_t hsize = sizeof(_header->_meta);
           char buf[hsize];
+
+          // Update Header
           auto next = _header->_meta._phys_next;
           _header->_meta._phys_next = 0;
           _header->_meta._nr_elements = 0;
           _header->serialize(buf, hsize);
           _core->Write(_header->_meta._phys_curr, buf, hsize);
 
-          // Punch Holes to LinkList Region
-          auto nr = total_size/PAGE_SIZE;
-
-          char *zeropages = new char [nr*PAGE_SIZE];
-          _core->Write(next, zeropages, nr*PAGE_SIZE);
-          delete zeropages;
-
-          auto rem = total_size % PAGE_SIZE;
-
-          char *zerobuf = new char [rem];
-          _core->Write(next, zerobuf, rem);
-          delete zerobuf;
+          //Punch Holes to Clear Region
+          char *zeroregion = new char [total_size];
+          _core->Write(next, zeroregion, total_size);
+          delete zeroregion;
 
           // Free the Region
           _allocator->DeAllocate(next, total_size);
+          delete zeroregion;
+
+          BOOST_LOG_TRIVIAL(info) << "List Cleared Size: " << total_size;
 
           // Finally Purge the List
           _list.clear();
