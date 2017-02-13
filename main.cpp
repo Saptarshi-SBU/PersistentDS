@@ -36,6 +36,7 @@ struct options {
    bool add;
    bool erase;
    int key;
+   char id[64];
    bool print;
 };
 
@@ -75,6 +76,8 @@ parse(int argc, char **argv, struct options* opt) {
                 }
        	    case 'c':
                 opt->create = true;
+                if (optarg)
+                    strncpy(opt->id, optarg, 64);
                 break;
        	    case 'd':
                 opt->clear = true;
@@ -132,11 +135,13 @@ int main(int argc, char **argv) {
             boost::shared_ptr<StorageAllocator>(new StorageAllocator(sink, 0, sink.size()));
 
         if (LINKLIST == opt.type) {
-           typedef PersistentLinkList<int, CoreIO, StorageAllocator> PMemLinkList;
-           boost::shared_ptr<PMemLinkList> pList;
 
-           //Create Link List or get Handle
-           pList = boost::shared_ptr<PMemLinkList>(new PMemLinkList(io, allocator));
+           typedef Registry<CoreIO, StorageAllocator> GlobalReg;
+           auto reg = boost::shared_ptr<GlobalReg>(new GlobalReg(MAX_READ, io, allocator));
+
+           typedef PersistentLinkList<int, CoreIO, StorageAllocator> PMemLinkList;
+           auto pList = boost::shared_ptr<PMemLinkList>
+               (new PMemLinkList(std::string(opt.id), reg, io, allocator));
 
            if (opt.clear)
                pList->clear();

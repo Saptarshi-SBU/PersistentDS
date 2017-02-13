@@ -1,3 +1,14 @@
+/*-----------------------------------------------------------------------------
+ *
+ *  Copyright(C): 2017
+ *
+ *  Storage Allocator for Persistent Storage
+ *
+ * ----------------------------------------------------------------------------*/
+
+#ifndef _STORAGE_RESOURCE_H
+#define _STORAGE_RESOURCE_H
+
 #include <iostream>
 #include <list>
 #include <memory>
@@ -332,3 +343,5 @@ void TestIODevice(void) {
     std::cout << std::hex << size << std::endl;
     std::cout << core.tellg() << std::endl;
 }
+
+#endif

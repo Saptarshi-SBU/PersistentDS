@@ -13,3 +13,21 @@ message spacemaprecord {
 
    required RecordType alloc = 3 [default = FREE];
 }
+
+message registryrecord {
+    required uint64 magic = 1 [default = 0];
+    required uint64 version = 2 [default = 0];
+    required uint64 key = 3 [default = 0];
+    required uint64 write_gen = 4 [default = 0];
+    optional uint64 pkey = 5 [default = 0];
+    required uint64 phys_curr = 6 [default = 0];
+    required uint64 phys_next = 7 [default = 0];
+    required int32  nr_elements = 8 [default = 0];
+
+    enum PersistenceType {
+       REGULAR = 1;
+       SNAPSHOT = 2;
+    }
+
+    required PersistenceType type = 9 [default = REGULAR];
+}
