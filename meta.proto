@@ -15,19 +15,22 @@ message spacemaprecord {
 }
 
 message registryrecord {
-    required uint64 magic = 1 [default = 0];
-    required uint64 version = 2 [default = 0];
-    required uint64 key = 3 [default = 0];
-    required uint64 write_gen = 4 [default = 0];
-    optional uint64 pkey = 5 [default = 0];
-    required uint64 phys_curr = 6 [default = 0];
-    required uint64 phys_next = 7 [default = 0];
-    required int32  nr_elements = 8 [default = 0];
+    required uint64 magic = 1;
+    required uint64 version = 2;
+    required uint64 key = 3;
+    required uint64 write_gen = 4;
+    optional uint64 pkey = 5;
+    required uint64 phys_curr = 6;
+    required uint64 phys_next = 7;
+    required int32  nr_elements = 8;
 
+    //Supported Data-Structures
     enum PersistenceType {
-       REGULAR = 1;
-       SNAPSHOT = 2;
+       LIST = 0;
+       BTREE = 1;
+       BPTREE = 2;
+       NSUP = 3;
     }
-
-    required PersistenceType type = 9 [default = REGULAR];
+    required PersistenceType type = 9 [default = LIST];
+    required bool issnap = 10;
 }

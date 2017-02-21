@@ -1,10 +1,11 @@
 /*-----------------------------------------------------------------------------
  *
- *  Copyright(C): 2017
+ *  Copyright(C): 2017 Saptarshi Sen
  *
- *  Persistent LinkList Implementation
+ *  Persistent LinkList with Support for Snapshots
  *
  * ----------------------------------------------------------------------------*/
+#include <map>
 
 #include "storage_allocator.hpp"
 #include "registry.hpp"
@@ -15,23 +16,15 @@ class LinkListNode {
 
     public:
 
-        enum OpType {
-            APPEND,
-            ERASE
-        };
-
         struct Data {
             T _value;
             off_t _phys_curr;
-            off_t _phys_prev;
-            off_t _phys_next;
-            OpType _op;
+            off_t _phys_birth;
         }data;
 
         LinkListNode(T value) {
             bzero((char*)&data, sizeof(struct Data));
             data._value = value;
-            data._op = APPEND;
         }
 
         LinkListNode() {
@@ -50,9 +43,8 @@ class LinkListNode {
 
         const std::string DebugString(void) const {
            std::ostringstream ss;
-           ss << " value: " << data._value << " off_curr: " << data._phys_curr;
-           ss << " off_prev: " << data._phys_prev;
-           ss << " off_next: " << data._phys_next << " op: " << data._op;
+           ss << " value: " << data._value ;
+           ss << " off_curr: " << data._phys_curr << " birth: " << data._phys_birth;
            return ss.str();
         }
 };
@@ -69,26 +61,21 @@ class PersistentLinkList {
           public :
 
           boost::shared_ptr<LinkListNode<T>> get(void) const {
-              return _curr;
-          }
-
-          bool hasNext(void) const {
-              return (_curr->data._phys_next) ? true : false;
+             return _curr;
           }
 
           Iterator Next(boost::shared_ptr<IO> &core) const {
-              const off_t pos = _curr->data._phys_next;
-              auto node =
-                  boost::shared_ptr<LinkListNode<T>>(new LinkListNode<T>());
-              const size_t size = sizeof(node->data);
-              char rbuf[size];
-              core->Read(pos, rbuf, size);
-              node->deserialize(rbuf, size);
-              return Iterator(node);
+             const off_t pos = _curr->data._phys_curr + sizeof(_curr->data);
+             auto node =
+                 boost::shared_ptr<LinkListNode<T>>(new LinkListNode<T>());
+             const size_t size = sizeof(node->data);
+             char rbuf[size];
+             core->Read(pos, rbuf, size);
+             node->deserialize(rbuf, size);
+             return Iterator(node);
           }
 
-          Iterator(boost::shared_ptr<LinkListNode<T>> node) :
-              _curr(node) {}
+          Iterator(boost::shared_ptr<LinkListNode<T>> node) : _curr(node) {}
 
           Iterator operator=(const Iterator& node) {
              (*this)._curr = node._curr;
@@ -100,7 +87,7 @@ class PersistentLinkList {
        void BuildList(void) {
 
            if (0 == preg.phys_next()) {
-              BOOST_LOG_TRIVIAL(error) << "No List entry found!";
+              BOOST_LOG_TRIVIAL(error) << __func__ << " List is empty!";
               return;
            }
 
@@ -116,18 +103,22 @@ class PersistentLinkList {
            Iterator it(_head);
            do {
                auto node = it.get();
-               BOOST_LOG_TRIVIAL(debug)
-                   << "node entry: " << node->DebugString();
-               _list.push_back(node);
+              _list.push_back(node);
+               if (node->data._phys_birth)
+                   _map[node->data._value] = node;
+               else {
+                   assert(_map.find(node->data._value) != _map.end());
+                   _map.erase(node->data._value);
+               }
+               BOOST_LOG_TRIVIAL(debug) << "node entry: " << node->DebugString();
                count++;
-               if (!it.hasNext())
+               if (count == preg.nr_elements())
                    break;
                it = it.Next(_core);
            } while (1);
-           assert (count == preg.nr_elements());
        }
 
-       void push_back(const T& x) {
+       void push_back(const T& x, bool hole=false) {
 
            // Allocate Node
            auto node =
@@ -137,63 +128,63 @@ class PersistentLinkList {
 
            auto mem = _allocator->Allocate(size);
            node->data._phys_curr = mem.first;
+           if (hole)
+               node->data._phys_birth = 0;
+           else
+               node->data._phys_birth = mem.first;
+           node->serialize(pbuf, size);
+          _core->Write(node->data._phys_curr, pbuf, size);
 
-           // Note we update node in-place
-           if (!_list.empty()) {
-              auto tail = _list.rbegin();
-              char qbuf[size];
-              node->data._phys_prev = (*tail)->data._phys_curr;
-              (*tail)->data._phys_next = node->data._phys_curr;
-              (*tail)->serialize(qbuf, size);
-             _core->Write((*tail)->data._phys_curr, qbuf, size);
-              node->serialize(pbuf, size);
-             _core->Write(node->data._phys_curr, pbuf, size);
-           } else {
-              node->serialize(pbuf, size);
-             _core->Write(node->data._phys_curr, pbuf, size);
+           if(_list.empty())
               preg.set_phys_next(node->data._phys_curr);
-           }
-
            auto nr = preg.nr_elements();
            preg.set_nr_elements(nr + 1);
           _greg->update(preg);
-          _list.push_back(node);
 
-           BOOST_LOG_TRIVIAL(info) << "node pushed: " << node->DebugString();
+          _list.push_back(node);
+          _map[node->data._value] = node;
+
+           BOOST_LOG_TRIVIAL(debug) << "node pushed: " << node->DebugString();
        }
 
        void pop_back(void) {
 
-           // Note preg is not updated on pop
-
-           if (!preg.phys_next()) {
-              BOOST_LOG_TRIVIAL(info) << "No List entry found!";
+           if (_list.empty()) {
+              BOOST_LOG_TRIVIAL(error) << __func__ << " List is empty!";
               return;
            }
 
-           boost::shared_ptr<LinkListNode<T>> tail;
-           for (auto iter = _list.rbegin(); iter != _list.rend(); iter++)
-              if ((*iter)->data._op == LinkListNode<T>::APPEND) {
-                 tail = (*iter);
-                 break;
-              }
+           int snapitems = _greg->GetSnapElements(preg.key());
+           BOOST_LOG_TRIVIAL(debug) << "Snap items : " << snapitems;
 
-           // Note we update node in-place
-           if (tail) {
-              const size_t size = sizeof(tail->data);
-              char buf[size];
-              tail->data._op = LinkListNode<T>::ERASE;
-              tail->serialize(buf, size);
-             _core->Write(tail->data._phys_curr, buf, size);
-              BOOST_LOG_TRIVIAL(info) << "node popped: " << tail->DebugString();
+           typename std::list<boost::shared_ptr<LinkListNode<T>>>::iterator iter = _list.begin();
+           for (int i = 0; i < snapitems - 1; i++) { if (iter != _list.end()) iter++; }
+           BOOST_LOG_TRIVIAL(debug) << "Max item : " << (*iter)->DebugString();
+
+           //for (auto riter = _list.rbegin(); riter != iter; riter++) {
+           for (auto riter = _list.rbegin(); riter != _list.rend(); riter++) {
+              if ((*riter)->data._value == (*iter)->data._value) {
+                  BOOST_LOG_TRIVIAL(error) << "Cannot pop items which are snapshotted";
+                  break;
+              } else if (((*riter)->data._phys_birth > 0) &&
+                 (_map.find((*riter)->data._value) != _map.end())) {
+                  push_back((*riter)->data._value, true);
+                 _map.erase((*riter)->data._value);
+                  break;
+              }
            }
        }
 
        void clear(void) {
 
           if (!preg.phys_next()) {
-             BOOST_LOG_TRIVIAL(info) << "No List entry found!";
-             return;
+             _greg->remove(preg.key());
+              return;
+          }
+
+          if (_greg->GetSnapElements(preg.key())) {
+              BOOST_LOG_TRIVIAL(error) << "Cannot Clear Parent having snapshots";
+              return;
           }
 
           // Compute Region Size to Free;
@@ -208,21 +199,20 @@ class PersistentLinkList {
           // Free the Region
          _allocator->DeAllocate(preg.phys_next(), total_size);
 
-          // Remove entry from registry
-         _greg->remove(preg.key());
          _head.reset();
-
-          BOOST_LOG_TRIVIAL(info) << "List Cleared Size: " << total_size;
 
           // Finally Purge the List
          _list.clear();
+          BOOST_LOG_TRIVIAL(debug) << "List Cleared Size: " << total_size;
+
+          // Remove entry from registry
+         _greg->remove(preg.key());
        }
 
        void print(void) const {
           BOOST_LOG_TRIVIAL(info) << "------Linked List Dump--------";
-          for (auto &i : _list)
-             if(i->data._op == LinkListNode<T>::APPEND)
-                std::cout << i->DebugString() << std::endl;
+          for (auto &i : _map)
+                std::cout << i.second->DebugString() << std::endl;
        }
 
        PersistentLinkList(std::string id,
@@ -231,14 +221,17 @@ class PersistentLinkList {
            : _core(core), _allocator(alloc), _greg(reg) {
 
            auto key = boost::hash_value(id);
-           if (!_greg->find(key, preg))
+           if (!_greg->find(key, preg)) {
               _greg->insert(key);
+              assert(_greg->find(key, preg));
+              BOOST_LOG_TRIVIAL(info) << "Created Registry entry for id " << id;
+           } else {
+              BOOST_LOG_TRIVIAL(debug) << "Registry record found " << preg.ShortDebugString();
+           }
 
-          _greg->find(key, preg);
-
-           BOOST_LOG_TRIVIAL(info) << preg.ShortDebugString();
-           if (preg.nr_elements())
+           if (preg.nr_elements()) {
               BuildList();
+           }
        }
 
     private:
@@ -257,6 +250,10 @@ class PersistentLinkList {
 
        // In-memory copy
        std::list<boost::shared_ptr<LinkListNode<T>>> _list;
+
+       // In-memory copy for live-objects
+       std::map<T, boost::shared_ptr<LinkListNode<T>>> _map;
+
 };
 
 void TestLinkListNode(void) {

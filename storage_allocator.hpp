@@ -28,6 +28,10 @@ using namespace boost::iostreams;
 using namespace boost::intrusive;
 using namespace boost::filesystem;
 
+#define RECORD_SIGNATURE (0xdeadface)
+#define SPACEMAPREGIONSIZE (1024*1024)
+#define METASLAB_SIZE (1024*1024*1024)
+
 // Boost Iostreams Device
 class StorageResource : public boost::iostreams::mapped_file {
 
@@ -58,6 +62,7 @@ class CoreIO : public boost::iostreams::stream<boost::iostreams::mapped_file> {
      void Read(off_t pos, char *buf, size_t size) {
         seekg(pos, beg);
         read(buf, size);
+        //std::cout << "Count : " << gcount() << std::endl;
      }
 
      void Write(off_t pos, const char *buf, size_t size) {
@@ -75,10 +80,6 @@ class MappedRegion : public boost::enable_shared_from_this<MappedRegion> {
       off_t _base;
       size_t _size;
 };
-
-#define RECORD_SIGNATURE (0xdeadface)
-#define SPACEMAPREGIONSIZE (1024*1024)
-#define METASLAB_SIZE (1024*1024*1024)
 
 class MetaSlab : public MappedRegion {
 
@@ -125,7 +126,7 @@ class MetaSlab : public MappedRegion {
                         pos+=length;
                         length = sizeof(size_t);
                         core->Read(pos, (char*)&size, length);
-                        std::cout << pos << ":" << size << ":" << length << std::endl;
+                        BOOST_LOG_TRIVIAL(debug) << pos << ":" << size << ":" << length;
                         assert(size);
                         char *buf = new char[size];
                         pos+=length;
@@ -192,7 +193,7 @@ class MetaSlab : public MappedRegion {
          while (_cursor < (start + _log_size)) {
             SpaceMap::SpaceMapRecord rec;
             auto n = rec.Read(_cursor, _core);
-            BOOST_LOG_TRIVIAL(info) << "Space-Map record size :" << n;
+            BOOST_LOG_TRIVIAL(debug) << "Space-Map record size :" << n;
             if (0 == n)
                 break;
             if (rec.rc.alloc() == db::spacemaprecord::ALLOCATE) {
@@ -210,7 +211,7 @@ class MetaSlab : public MappedRegion {
                    _cachedSize+=rec.rc.size();
             }
            _cursor+=n;
-            BOOST_LOG_TRIVIAL(info) << "On-Disk Space-Map Record " << rec.DebugString();
+            BOOST_LOG_TRIVIAL(debug) << "On-Disk Space-Map Record " << rec.DebugString();
          }
 
          // else Initialize New Map
@@ -218,10 +219,10 @@ class MetaSlab : public MappedRegion {
              SpaceMap::SpaceMapRecord rec(_base + _log_size, size, db::spacemaprecord::FREE);
             _cursor+=rec.Write(_cursor, _core);
             _spacemap->_free_map[rec.rc.base()] = rec;
-             BOOST_LOG_TRIVIAL(info) << "Creating Space-Map Record" << rec.DebugString();
+             BOOST_LOG_TRIVIAL(debug) << "Creating Space-Map Record" << rec.DebugString();
          }
 
-         BOOST_LOG_TRIVIAL(info) << "MetaSlab Avaliable Space " << _cachedSize;
+         BOOST_LOG_TRIVIAL(debug) << "MetaSlab Avaliable Space " << _cachedSize;
       }
 
       ~MetaSlab() {
@@ -239,7 +240,7 @@ class MetaSlab : public MappedRegion {
                // Update tree
               _spacemap->_free_map.erase(rec.rc.base());
               _spacemap->_alloc_map[rec.rc.base()] = rec;
-               std::cout << rec.DebugString() << std::endl;
+               BOOST_LOG_TRIVIAL(debug) << rec.DebugString();
 
                // Create New DeAllocation record
                auto new_pos = it.second.rc.base() + size;
@@ -249,7 +250,7 @@ class MetaSlab : public MappedRegion {
               _cursor+=new_rec.Write(_cursor, _core);
                // Update tree
               _spacemap->_free_map[new_pos] = new_rec;
-               std::cout << new_rec.DebugString() << std::endl;
+               BOOST_LOG_TRIVIAL(debug) << new_rec.DebugString();
 
               _cachedSize-=size;
                return std::pair<off_t, size_t>(rec.rc.base(), rec.rc.size());
@@ -268,7 +269,7 @@ class MetaSlab : public MappedRegion {
          _spacemap->_free_map[rec.rc.base()] = rec;
          _spacemap->_alloc_map.erase(rec.rc.base());
          _cachedSize+=size;
-         std::cout << rec.DebugString() << std::endl;
+          BOOST_LOG_TRIVIAL(debug) << rec.DebugString();
       }
 
       unsigned int _id;  // meta-slab id
@@ -300,7 +301,7 @@ class StorageAllocator
              _mslabs.push_back(slab);
            }
 
-           std::cout << "Total Meta-Slabs " << _mslabs.size() << std::endl;
+           BOOST_LOG_TRIVIAL(debug) << "Total Meta-Slabs " << _mslabs.size();
         }
 
        ~StorageAllocator() {
@@ -308,7 +309,7 @@ class StorageAllocator
        }
 
        std::pair<off_t, size_t> Allocate(std::string::size_type n, void* hint = 0) {
-          BOOST_LOG_TRIVIAL(info) << __func__ << " request size: " << n;
+          BOOST_LOG_TRIVIAL(debug) << __func__ << " request size: " << n;
           for (auto it : _mslabs) {
              if (it->_cachedSize > n) {
                 auto result = it->Allocate(n);
@@ -322,7 +323,7 @@ class StorageAllocator
        }
 
        void DeAllocate(off_t start, size_t size) {
-          BOOST_LOG_TRIVIAL(info) << __func__ << " freed size: " << size;
+          BOOST_LOG_TRIVIAL(debug) << __func__ << " freed size: " << size;
           for (auto it : _mslabs) {
               if ((it->_base < start) &&
                   (it->_base + it->_size) > (start + size)) {

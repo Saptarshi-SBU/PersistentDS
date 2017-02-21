@@ -2,10 +2,11 @@
  *
  *  Copyright(C): 2017
  *
- *  Registry information of Persistent Data Structures
+ *  Registry debugrmation of Persistent Data Structures
  *
  * ----------------------------------------------------------------------------*/
 #include <list>
+#include <algorithm>
 
 #include <boost/functional/hash.hpp>
 
@@ -14,8 +15,11 @@
 
 using namespace std;
 
-#define ROUNDUP(pos, align) (pos + (pos % align))
+#define ROUNDUP(pos, align) (pos + align - (pos % align))
+#define CHECK_HASH(z) (boost::hash_value(z))
+
 #define REGISTRY_SIGNATURE (0xdeadbeef)
+
 template <class IO, class Allocator>
 class Registry {
 
@@ -24,7 +28,8 @@ class Registry {
        size_t region_size;
 
        // headers which are stamped per record
-       uint64_t magic;
+       const uint64_t magic = REGISTRY_SIGNATURE;
+
        size_t write_size;
 
        // registry entries always start at this alignment
@@ -33,8 +38,11 @@ class Registry {
        // bump allocator
        off_t cursor;
 
-       // record list
+       // In-Memory Registry
        std::list<db::registryrecord> reg_list;
+
+       // Data-Structure for book-keeping snapshots
+       std::map<size_t, vector<int>> _map;
 
        boost::shared_ptr<IO> _core;
 
@@ -47,27 +55,43 @@ class Registry {
           region_size(size), _core(core), _allocator(alloc) {
 
           // Search for the Signature
-          for (off_t pos = 0; (pos < region_size); pos+=alignment) {
-             _core->Read(pos, (char*)&magic, sizeof(magic));
-              if (magic != REGISTRY_SIGNATURE)
-                  continue;
+          const int start = SPACEMAPREGIONSIZE;
+          off_t pos = ROUNDUP(start, alignment);
+          while (pos < start + region_size) {
+              // Fixed an issue where we passed member magic itself in the Read
+              uint64_t val = 0;
+             _core->Read(pos, (char*)&val, sizeof(magic));
+              if (val != REGISTRY_SIGNATURE)
+                  break;
+
               pos+=sizeof(magic);
              _core->Read(pos, (char*)&write_size, sizeof(write_size));
               auto rbuf = new char[write_size];
               db::registryrecord rec;
               pos+=sizeof(write_size);
              _core->Read(pos, rbuf, write_size);
-              rec.ParseFromString(std::string(rbuf));
+              //BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << CHECK_HASH(string(rbuf));
+              // Note the String Constructor used.
+              // In case the char pointer contains null characters
+              rec.ParseFromString(std::string(rbuf, write_size));
               pos+=write_size;
-              delete rbuf;
+
+              // Initializing in-memory registry
               reg_list.push_back(rec);
+
               cursor = ROUNDUP(pos, alignment);
+              pos = cursor;
+              BOOST_LOG_TRIVIAL(debug) << rec.ShortDebugString();
+              BOOST_LOG_TRIVIAL(debug) << "registry next cursor location" << cursor;
+              delete [] rbuf;
           }
 
           if (reg_list.empty()) {
               auto ans = _allocator->Allocate(region_size);
+              BOOST_LOG_TRIVIAL(debug) << "Initializing Registry at offset : " << ans.first;
               cursor = ROUNDUP(ans.first, alignment);
-          }
+          } else
+              populateSnapList();
        }
 
        ~Registry() {
@@ -75,7 +99,15 @@ class Registry {
        }
 
        bool find(size_t id, db::registryrecord& rec) {
+           BOOST_LOG_TRIVIAL(debug) << "Look Up key: " << id;
+
+           if (reg_list.empty()) {
+               BOOST_LOG_TRIVIAL(info) << "Registry is empty";
+               return false;
+           }
+
            for (auto &i : reg_list) {
+               BOOST_LOG_TRIVIAL(trace) << __func__ << " id : " << i.key();
                if (i.key() == id) {
                    rec = i;
                    return true;
@@ -89,13 +121,24 @@ class Registry {
        // to allocate entries from this region
        void insert(size_t id) {
 
-           std::string str;
            db::registryrecord rec;
-           rec.set_key(id);
            assert(cursor % alignment == 0);
-           rec.set_phys_curr(cursor);
+           rec.set_magic(REGISTRY_SIGNATURE);
+           rec.set_version(0);
+           rec.set_key(id);
+           rec.set_issnap(false);
            rec.set_write_gen(cursor);
+           rec.set_pkey(0);
+           rec.set_phys_curr(cursor);
+           rec.set_phys_next(0);
+           rec.set_nr_elements(0);
+           rec.set_type(db::registryrecord::LIST);
+
+           std::string str;
            rec.SerializeToString(&str);
+           BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << rec.ShortDebugString();
+
+           //Next position for new entry
            auto pos = cursor;
           _core->Write(pos, (char*)&magic, sizeof(magic));
            pos+=sizeof(magic);
@@ -103,62 +146,60 @@ class Registry {
           _core->Write(pos, (char*)&write_size, sizeof(write_size));
            pos+=sizeof(write_size);
           _core->Write(pos, str.c_str(), write_size);
-           cursor+=alignment;
+           //BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << CHECK_HASH(str);
+           reg_list.push_back(rec);
+
+           // Update cursor
+           cursor = ROUNDUP(pos, alignment);
+           BOOST_LOG_TRIVIAL(debug) << "registry next cursor location " << cursor;
+       }
+
+       bool reg_lookup(std::list<db::registryrecord>::iterator&  iter, uint64_t key) {
+
+           if (reg_list.empty())
+               return false;
+
+           for (iter = reg_list.begin();
+               (iter != reg_list.end()) && ((*iter).key() != key) ; iter++);
+
+           return (iter != reg_list.end()) ? true : false;
        }
 
        void update(db::registryrecord& rec) {
-           if (reg_list.empty())
+
+           std::list<db::registryrecord>::iterator iter;
+           if (!reg_lookup(iter, rec.key()))
                return;
 
-           auto iter = reg_list.begin();
-           for (;iter!=reg_list.end();iter++)
-               if ((*iter).key() == rec.key())
-                   break;
-#if 0
-           auto iter = std::find(reg_list.begin(), reg_list.end(),
-                   [rec] (const db::registryrecord& rc) {
-                   return (rc.key() == rec.key());});
-#endif
-
-           if (iter == reg_list.end())
-               return;
+           BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << rec.key();
 
            *iter = rec;
            auto pos = (*iter).phys_curr();
-           pos+=sizeof(magic);
 
-           //Update only size and record
            std::string str;
            (*iter).SerializeToString(&str);
            write_size = str.size();
-          _core->Write(pos, (char*)&(write_size), sizeof(write_size));
+           pos+=sizeof(magic);
+          _core->Write(pos, (char*)&write_size, sizeof(write_size));
            pos+=sizeof(write_size);
           _core->Write(pos, str.c_str(), write_size);
        }
 
        void remove(size_t id) {
 
-           if (reg_list.empty())
+           std::list<db::registryrecord>::iterator iter;
+           if (!reg_lookup(iter, id))
                return;
 
-           auto iter = reg_list.begin();
-           for (;iter!=reg_list.end();iter++)
-               if ((*iter).key() == id)
-                   break;
-#if 0
-           auto iter = std::find(reg_list.begin(), reg_list.end(),
-                   [id] (const db::registryrecord& rec) {
-                   return (rec.key() == id);});
-#endif
+           BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << id;
 
-           if (iter == reg_list.end())
-               return;
-
-           std::string str;
            (*iter).set_phys_next(0);
            (*iter).set_nr_elements(0);
-           (*iter).set_write_gen(-1);
+           (*iter).set_write_gen(0);
+
+           std::string str;
            (*iter).SerializeToString(&str);
+
            auto pos = (*iter).phys_curr();
            pos+=sizeof(magic);
 
@@ -170,5 +211,58 @@ class Registry {
 
            //remove from list
            reg_list.erase(iter);
+      }
+
+      void snapshot(size_t child_id, size_t parent_id) {
+
+           std::list<db::registryrecord>::iterator iter;
+           if (!reg_lookup(iter, parent_id)) {
+               BOOST_LOG_TRIVIAL(error) << "Parent for Snapshot not found : " << parent_id;
+               return;
+           }
+
+           // Create SnapShot Entry
+           db::registryrecord rec;
+           assert(cursor % alignment == 0);
+           rec.set_magic(REGISTRY_SIGNATURE);
+           rec.set_issnap(true);
+           rec.set_version(0);
+           rec.set_key(child_id);
+           rec.set_write_gen(cursor);
+           // Note : parent key stored here
+           rec.set_pkey((*iter).key());
+           rec.set_phys_next((*iter).phys_next());
+           rec.set_nr_elements((*iter).nr_elements());
+           rec.set_phys_curr(cursor);
+           rec.set_type(db::registryrecord::LIST);
+
+           std::string str;
+           rec.SerializeToString(&str);
+           BOOST_LOG_TRIVIAL(debug) << __func__ << ": " << rec.ShortDebugString();
+
+           auto pos = cursor;
+          _core->Write(pos, (char*)&magic, sizeof(magic));
+           pos+=sizeof(magic);
+           write_size = str.size();
+          _core->Write(pos, (char*)&write_size, sizeof(write_size));
+           pos+=sizeof(write_size);
+          _core->Write(pos, str.c_str(), write_size);
+
+           reg_list.push_back(rec);
+
+           // Update cursor
+           cursor = ROUNDUP(pos, alignment);
+           BOOST_LOG_TRIVIAL(debug) << "registry next cursor location " << cursor;
+      }
+
+      void populateSnapList(void) {
+         for (auto &i : reg_list)
+             if (i.pkey())
+                 _map[i.pkey()].push_back(i.nr_elements());
+      }
+
+      int GetSnapElements(size_t id) {
+          return (_map.find(id) != _map.end()) ?
+              *max_element(_map[id].begin(), _map[id].end()) : 0;
       }
 };

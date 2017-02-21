@@ -8,7 +8,13 @@ void init_boost_logger(void)
      */
     boost::log::add_common_attributes();
     boost::log::core::get()->set_filter(
+#if LOGLEVELINFO            
+        boost::log::trivial::severity >= boost::log::trivial::info
+#elif LOGLEVELDEBUG        
+        boost::log::trivial::severity >= boost::log::trivial::debug
+#else        
         boost::log::trivial::severity >= boost::log::trivial::trace
+#endif        
     );
 
     /* log formatter:
