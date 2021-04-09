@@ -359,20 +359,14 @@ func (n *Node) UpdateNext(level uint16, prevPtr, newPtr *Node, prevDeleted, newD
 	wordAddr := (*uint64)(RawPointer(nodeRefAddr + uintptr(7)))
 	prevVal := (uint64)(uintptr(RawPointer(prevPtr)) << 8)
 	newVal := (uint64)(uintptr(RawPointer(newPtr)) << 8)
-	/*
-		if prevVal == 0 {
-			panic("nil ptr detected")
-		}
-		if newVal == 0 {
-			panic("nil ptr detected")
-		}
-	*/
+
 	if prevDeleted {
 		prevVal |= (uint64)(deletedFlag)
 	}
 	if newDeleted {
 		newVal |= (uint64)(deletedFlag)
 	}
+
 	swapped := atomic.CompareAndSwapUint64(wordAddr, prevVal, newVal)
 	if swapped {
 		atomic.CompareAndSwapPointer((*unsafe.Pointer)(unsafe.Pointer(nodeRefAddr+nodeRefFlagSize)),

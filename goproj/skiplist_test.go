@@ -2,14 +2,19 @@
 package goproj
 
 import (
+	"flag"
 	"fmt"
 	"math/rand"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 	"unsafe"
 )
+
+var count = flag.String("count", "", "dir of package containing embedded files")
 
 func TestSkiplist(t *testing.T) {
 	s := NewSkiplist(4)
@@ -21,22 +26,12 @@ func TestSkiplistInsert(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		p := new(int)
 		*p = rand.Intn(1000)
-		s.InsertNoThreadSafe(RawPointer(p))
+		s.InsertConcurrentUnsafe(RawPointer(p))
 	}
 	s.Print()
 }
 
-func TestSkiplistInsertAtomics(t *testing.T) {
-	s := NewSkiplist(4)
-	for i := 0; i < 8; i++ {
-		p := new(int)
-		*p = rand.Intn(1000)
-		s.InsertThreadSafe(RawPointer(p), 0)
-	}
-	s.Print()
-}
-
-func TestSkiplistInsertAtomicsAsync(t *testing.T) {
+func TestSkiplistInsertConcurrentSimple(t *testing.T) {
 	s := NewSkiplist(4)
 	var wg sync.WaitGroup
 	for i := 0; i < 1024; i++ {
@@ -44,7 +39,7 @@ func TestSkiplistInsertAtomicsAsync(t *testing.T) {
 		go func() {
 			p := new(int)
 			*p = rand.Intn(1000)
-			s.InsertThreadSafe(RawPointer(p), (uint64)(i))
+			s.InsertConcurrentSimple(RawPointer(p), (uint64)(i))
 			wg.Done()
 		}()
 	}
@@ -52,19 +47,21 @@ func TestSkiplistInsertAtomicsAsync(t *testing.T) {
 	s.Print()
 }
 
-func TestSkiplistInsertAtomicsAsyncBig(t *testing.T) {
+func TestSkiplistInsertConcurrentSimpleGC(t *testing.T) {
 	var ops uint64
 	var wg sync.WaitGroup
 	n := 200000
 	ops = 0
 	s := NewSkiplist(4)
 	fmt.Println("inserting items:", n)
+	gc := debug.SetGCPercent(100)
+	fmt.Println("GC (%):", gc)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			p := new(int)
 			*p = rand.Intn(1000)
-			s.InsertThreadSafe(RawPointer(p), (uint64)(i))
+			s.InsertConcurrentSimple(RawPointer(p), (uint64)(i))
 			atomic.AddUint64(&ops, 1)
 			wg.Done()
 		}()
@@ -74,7 +71,7 @@ func TestSkiplistInsertAtomicsAsyncBig(t *testing.T) {
 	s.Print()
 }
 
-func TestSkiplistInsertAtomicsAsyncBigNoGC(t *testing.T) {
+func TestSkiplistInsertConcurrentSimpleNoGC(t *testing.T) {
 	var ops uint64
 	var wg sync.WaitGroup
 	var stats debug.GCStats
@@ -90,7 +87,7 @@ func TestSkiplistInsertAtomicsAsyncBigNoGC(t *testing.T) {
 		go func() {
 			p := new(int)
 			*p = rand.Intn(1000)
-			s.InsertThreadSafe(RawPointer(p), (uint64)(i))
+			s.InsertConcurrentSimple(RawPointer(p), (uint64)(i))
 			atomic.AddUint64(&ops, 1)
 			wg.Done()
 		}()
@@ -103,12 +100,12 @@ func TestSkiplistInsertAtomicsAsyncBigNoGC(t *testing.T) {
 	s.Print()
 }
 
-func doInsert1(s *Skiplist, ptr RawPointer, wg *sync.WaitGroup, goid int) {
-	s.InsertThreadSafe(ptr, (uint64)(goid))
-	wg.Done()
+func doInsertSimple(s *Skiplist, ptr RawPointer, wg *sync.WaitGroup, goid int) {
+	defer wg.Done()
+	s.InsertConcurrentSimple(ptr, (uint64)(goid))
 }
 
-func doInsert2(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
+func doInsertV0(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
 	defer wg.Done()
 	var val int
 	if isRand {
@@ -118,9 +115,36 @@ func doInsert2(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
 		val = n
 	}
 	itm := int(val)
-	s.InsertThreadSafe(unsafe.Pointer(&itm), (uint64)(1))
+	s.InsertConcurrentSimple(unsafe.Pointer(&itm), (uint64)(1))
 }
-func TestSkiplistInsertGC1(t *testing.T) {
+
+func doInsertV1(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
+	defer wg.Done()
+	var val int
+	if isRand {
+		rnd := rand.New(rand.NewSource(int64(rand.Int())))
+		val = rnd.Int()
+	} else {
+		val = n
+	}
+	itm := int(val)
+	s.InsertConcurrentV1(unsafe.Pointer(&itm))
+}
+
+func doInsertV2(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
+	defer wg.Done()
+	var val int
+	if isRand {
+		rnd := rand.New(rand.NewSource(int64(rand.Int())))
+		val = rnd.Int()
+	} else {
+		val = n
+	}
+	itm := int(val)
+	s.InsertConcurrentV2(unsafe.Pointer(&itm))
+}
+
+func TestSkiplistInsertConcurrentSimpleSlice(t *testing.T) {
 	var wg sync.WaitGroup
 	var stats debug.GCStats
 	n := 600000
@@ -132,30 +156,60 @@ func TestSkiplistInsertGC1(t *testing.T) {
 	for i := 0; i < n; i++ {
 		p[i] = i
 		wg.Add(1)
-		go doInsert1(s, RawPointer(&p[i]), &wg, i)
+		go doInsertSimple(s, RawPointer(&p[i]), &wg, i)
 	}
 	wg.Wait()
 	debug.ReadGCStats(&stats)
-	//fmt.Println("GC (%):", debug.SetGCPercent(100))
+	fmt.Println("GC (%):", debug.SetGCPercent(100))
 	fmt.Println("num gc:", stats.NumGC, "gctime:", stats.PauseTotal)
 	s.Print()
 }
 
-func TestSkiplistInsertGC2(t *testing.T) {
+func TestSkiplistInsertValuesV0(t *testing.T) {
 	var wg sync.WaitGroup
 	var stats debug.GCStats
-	n := 1000000
+	n := 100000
 	fmt.Println("inserting items:", n)
 	gc := debug.SetGCPercent(100)
 	fmt.Println("GC (%):", gc)
 	s := NewSkiplist(4)
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go doInsert2(s, &wg, i, false)
+		go doInsertV0(s, &wg, i, false)
 	}
 	wg.Wait()
 	debug.ReadGCStats(&stats)
-	//fmt.Println("GC (%):", debug.SetGCPercent(100))
+	fmt.Println("GC (%):", debug.SetGCPercent(100))
 	fmt.Println("num gc:", stats.NumGC, "gctime:", stats.PauseTotal)
 	s.Print()
+}
+
+func TestSkiplistInsertValuesV1(t *testing.T) {
+	var wg sync.WaitGroup
+	n := 100000
+	s := NewSkiplist(4)
+	t0 := time.Now()
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go doInsertV1(s, &wg, i, false)
+	}
+	wg.Wait()
+	dur := time.Since(t0)
+	s.Print()
+	fmt.Printf("%d items took %v insert conflicts :%v\n", n, dur, nr_insert_retries)
+}
+
+func TestSkiplistInsertValuesV2(t *testing.T) {
+	var wg sync.WaitGroup
+	n, _ := strconv.Atoi(*count)
+	s := NewSkiplist(4)
+	t0 := time.Now()
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go doInsertV2(s, &wg, i, false)
+	}
+	wg.Wait()
+	dur := time.Since(t0)
+	s.Print()
+	fmt.Printf("%d items took %v insert conflicts :%v\n", n, dur, nr_insert_retries)
 }
