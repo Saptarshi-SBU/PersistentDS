@@ -151,14 +151,20 @@ func (s *Skiplist) FindPathV1(key int, level int) (prev, next *Node) {
 	return prev, next
 }
 
-func (s *Skiplist) FindPathV2(key int, level int, pred [](*Node), succ [](*Node)) {
+func (s *Skiplist) FindPathV2(key int, level int, pred [](*Node), succ [](*Node)) bool {
 	prev := s.head
+	found := false
 	for i := (int)(s.level) - 1; i >= 0; i-- {
 		for curr := prev; curr != nil; curr, _ = curr.GetNext((uint16)(i)) {
 			data := *(*int)(curr.datap)
 			if key < data {
 				pred[i] = prev
 				succ[i] = curr
+				break
+			} else if key == data {
+				pred[i] = prev
+				succ[i], _ = curr.GetNext((uint16)(i))
+				found = true
 				break
 			}
 			prev = curr
@@ -170,6 +176,65 @@ func (s *Skiplist) FindPathV2(key int, level int, pred [](*Node), succ [](*Node)
 				*(*int)(succ[i].datap), "level:", i, level)
 		}
 	}
+	return found
+}
+
+// The function can delete stale nodes if present in a path lookup
+func (s *Skiplist) FindPathV3(key int, level int, pred [](*Node), succ [](*Node)) bool {
+retry:
+	prev := s.head
+	found := false
+	deleted := false
+	pprev := (*Node)(nil)
+	flushed := false
+	// irrespective of node level, we start scanning from the maximum skiplist node level
+	for i := (int)(s.level) - 1; i >= 0; i-- {
+		for curr := prev; curr != nil; curr, deleted = curr.GetNext((uint16)(i)) {
+			// flush stale items
+			for deleted {
+				var next *Node
+				if !s.DeleteReal(i, pprev, prev, curr) { // someone might have unlinked the node
+					log.Println("retrying delete for key:", key,
+						"real key:", *(*int)(prev.datap))
+					goto retry
+				}
+				next, deleted = curr.GetNext((uint16)(i))
+				if deleted {
+					prev = curr
+					curr = next
+				} else {
+					prev = pprev
+				}
+				flushed = true
+			}
+
+			// if items are flushed, we need to restart the findPath because we might be
+			// diverted while deleting nodes
+			if flushed {
+				goto retry
+			}
+			data := *(*int)(curr.datap)
+			if key < data {
+				pred[i] = prev
+				succ[i] = curr
+				break
+			} else if key == data {
+				pred[i] = prev
+				succ[i], _ = curr.GetNext((uint16)(i))
+				found = true
+				break
+			}
+			pprev = prev
+			prev = curr
+		}
+	}
+	if dbg {
+		for i := (int)(s.level) - 1; i >= 0; i-- {
+			log.Println("key:", key, "neighbours:", *(*int)(pred[i].datap),
+				*(*int)(succ[i].datap), "level:", i, level)
+		}
+	}
+	return found
 }
 
 func (s *Skiplist) InsertConcurrentV1(ptr RawPointer) {
@@ -204,7 +269,7 @@ func (s *Skiplist) InsertConcurrentV2(ptr RawPointer) {
 	pred := make([](*Node), s.level)
 	succ := make([](*Node), s.level)
 	t0 := time.Now()
-	s.FindPathV2(key, (int)(level), pred[:], succ[:])
+	_ = s.FindPathV2(key, (int)(level), pred[:], succ[:])
 	for i := 0; i < (int)(level); i++ {
 	retry:
 		node.SetNext((uint16)(i), succ[i], false)
@@ -216,7 +281,7 @@ func (s *Skiplist) InsertConcurrentV2(ptr RawPointer) {
 				log.Println("insert:", p, key, d)
 			}
 		} else {
-			s.FindPathV2(key, (int)(i), pred[:], succ[:])
+			_ = s.FindPathV2(key, (int)(i), pred[:], succ[:])
 			atomic.AddUint64(&nr_insert_retries, 1)
 			//log.Println("retry insert", pred[i], succ[i], i)
 			goto retry
@@ -225,6 +290,81 @@ func (s *Skiplist) InsertConcurrentV2(ptr RawPointer) {
 	if dbg_latency {
 		log.Println("insert duration :", time.Since(t0))
 	}
+}
+
+// The deletion happens in two phases.
+// Phase 1 : Soft Delete
+// Phase 2 : Unlink
+func (s *Skiplist) DeleteConcurrent(ptr RawPointer) bool {
+	key := *(*int)(ptr)
+	level := (int)(s.level)
+	if s.DeleteSoft(ptr) {
+		pred := make([](*Node), level+1)
+		succ := make([](*Node), level+1)
+		if dbg {
+			log.Println("attempt real delete after soft deletion, key:", key)
+		}
+		// for updating link, we need to fetch the path from the node
+		// +1 because we want to delete the node
+		s.FindPathV3(key+1, level, pred[:], succ[:])
+		return true
+	} else {
+		log.Println("failed to mark for soft deletion, key:", key)
+		return false
+	}
+}
+
+// This stamps the node's level pointers with the deletedFlag
+func (s *Skiplist) DeleteSoft(ptr RawPointer) bool {
+	i := 0
+	key := *(*int)(ptr)
+	level := (int)(s.level)
+	pred := make([](*Node), level+1)
+	succ := make([](*Node), level+1)
+	if dbg {
+		log.Println("marking key for soft deletion:", key)
+	}
+retry:
+	found := s.FindPathV3(key, i, pred[:], succ[:])
+	if !found {
+		log.Println("key not present in Skiplist for soft deletion, key:", key)
+		return false
+	}
+	node, _ := pred[i].GetNext((uint16)(i))
+	for ; i < (int)(node.Level()); i++ {
+		if !node.UpdateNext((uint16)(i), succ[i], succ[i], false, true) {
+			log.Println("retrying soft deletion, key:", key, "level:", i)
+			goto retry
+		}
+	}
+	if dbg {
+		log.Println("key is soft deleted:", key)
+	}
+	return true
+}
+
+// Real unlink happens here using an atomic update of the forward pointers
+func (s *Skiplist) DeleteReal(level int, pred, node, succ *Node) bool {
+	if pred == nil || node == nil {
+		panic("nil nodes passed to DeleteReal")
+	}
+	key := *(*int)(node.datap)
+	if dbg {
+		log.Println("deleting key real:", key, "level:", level)
+	}
+	_, deleted := node.GetNext((uint16)(level))
+	if !deleted {
+		log.Println("cannot unlink, node not marked for deletion:", key)
+		return false
+	}
+	if !pred.UpdateNext((uint16)(level), node, succ, false, false) {
+		log.Println("failed to unlink node due to a race", key, "level:", level)
+		return false
+	}
+	if dbg {
+		log.Println("node removed from Skiplist, key:", key, "level:", level)
+	}
+	return true
 }
 
 func (s *Skiplist) Print() {

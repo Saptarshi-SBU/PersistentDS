@@ -20,7 +20,7 @@ type Item struct {
 type Node struct {
 	datap unsafe.Pointer
 	id    uint64
-	Cache int64
+	cache int64
 	level uint16
 }
 

@@ -4,6 +4,7 @@ package goproj
 import (
 	"flag"
 	"fmt"
+	"log"
 	"math/rand"
 	"runtime/debug"
 	"strconv"
@@ -144,6 +145,13 @@ func doInsertV2(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
 	s.InsertConcurrentV2(unsafe.Pointer(&itm))
 }
 
+func doDelete(s *Skiplist, wg *sync.WaitGroup, n int, isRand bool) {
+	defer wg.Done()
+	itm := int(n)
+	s.DeleteConcurrent(unsafe.Pointer(&itm))
+	fmt.Println("deleted :", n)
+}
+
 func TestSkiplistInsertConcurrentSimpleSlice(t *testing.T) {
 	var wg sync.WaitGroup
 	var stats debug.GCStats
@@ -212,4 +220,64 @@ func TestSkiplistInsertValuesV2(t *testing.T) {
 	dur := time.Since(t0)
 	s.Print()
 	fmt.Printf("%d items took %v insert conflicts :%v\n", n, dur, nr_insert_retries)
+}
+
+func TestSkipListIterator(t *testing.T) {
+	var wg sync.WaitGroup
+	n := 64
+	s := NewSkiplist(4)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go doInsertV2(s, &wg, i, false)
+	}
+	wg.Wait()
+	it := s.NewIterator()
+	for it.Next(); it.isValid(); it.Next() {
+		data := *(*int)(it.GetData())
+		log.Println("node val:", it.GetNode(), data)
+	}
+	s.Print()
+}
+
+func TestSkipListIteratorwithSeek(t *testing.T) {
+	var wg sync.WaitGroup
+	n := 64
+	s := NewSkiplist(4)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go doInsertV2(s, &wg, i, false)
+	}
+	wg.Wait()
+	it := s.NewIterator()
+	item := int(32)
+	found := it.Seek(RawPointer(&item))
+	if found {
+		for ; it.isValid(); it.Next() {
+			data := *(*int)(it.GetData())
+			log.Println("node val:", it.GetNode(), data)
+		}
+	}
+	s.Print()
+}
+
+func TestSkipListIteratorwithDeletes(t *testing.T) {
+	var wg_insert, wg_delete sync.WaitGroup
+	n := 32
+	s := NewSkiplist(4)
+	for i := 0; i < n; i++ {
+		wg_insert.Add(1)
+		go doInsertV2(s, &wg_insert, i, false)
+	}
+	wg_insert.Wait()
+	for i := 0; i < n/2; i++ {
+		wg_delete.Add(1)
+		go doDelete(s, &wg_delete, i, false)
+	}
+	wg_delete.Wait()
+	it := s.NewIterator()
+	log.Println("iterator scan:")
+	for it.NextMutable(); it.isValid(); it.NextMutable() {
+		data := *(*int)(it.GetData())
+		log.Println("scan val:", it.GetNode(), data)
+	}
 }
