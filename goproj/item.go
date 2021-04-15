@@ -2,6 +2,8 @@
 
 package goproj
 
+const MaxInt64 int64 = int64(^uint(0) >> 1)
+
 // our data
 type Item struct {
 	data      int64
@@ -17,7 +19,7 @@ type ItemSnapMeta struct {
 func AllocateItem(val int64, vers int64) *Item {
 	return &Item{
 		data:      val,
-		snap_meta: ItemSnapMeta{born_vers: vers, dead_vers: 100},
+		snap_meta: ItemSnapMeta{born_vers: vers, dead_vers: MaxInt64},
 	}
 }
 

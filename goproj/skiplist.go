@@ -256,6 +256,21 @@ retry:
 	return (*Node)(nil)
 }
 
+func (s *Skiplist) GetRangeConcurrent(minkey, maxkey int) bool {
+	level := s.level
+	pred := make([](*Node), level+1)
+	succ := make([](*Node), level+1)
+	found := s.FindPathV3((int)(minkey), 0, pred, succ)
+	if !found {
+		key := *(*int)(succ[0].datap)
+		found = (key >= minkey) && (key <= maxkey)
+	}
+	if dbg_engine {
+		log.Println("range get :", minkey, "-", maxkey, "found:", found)
+	}
+	return found
+}
+
 func (s *Skiplist) InsertConcurrentV1(ptr RawPointer) {
 	level := s.GetNewLevel()
 	key := *(*int)(ptr)
