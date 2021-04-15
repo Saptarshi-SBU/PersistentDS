@@ -13,10 +13,6 @@ type RawPointer = unsafe.Pointer
 
 var deletedFlag int16 = 0x1
 
-type Item struct {
-	val int64
-}
-
 type Node struct {
 	datap unsafe.Pointer
 	id    uint64

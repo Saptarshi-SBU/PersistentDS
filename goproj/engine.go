@@ -1,0 +1,101 @@
+// Copyright (c) 2021 Saptarshi Sen
+
+package goproj
+
+import (
+	"log"
+	"sync/atomic"
+)
+
+var dbg_engine bool = false
+
+type StorageEngine struct {
+	i_list       *Skiplist
+	s_list       *Skiplist
+	curr_version int64
+}
+
+func InitializeStorageEngine() *StorageEngine {
+	s := &StorageEngine{
+		i_list:       NewSkiplist(4),
+		s_list:       NewSkiplist(4),
+		curr_version: 1,
+	}
+	return s
+}
+
+func (s *StorageEngine) GetVersion() int64 {
+	return s.curr_version
+}
+
+func (s *StorageEngine) NewSnapShot() *Snapshot {
+	next_vers := atomic.AddInt64(&s.curr_version, 1)
+	snap := &Snapshot{
+		version:  next_vers - 1,
+		refcount: 0,
+		i_list:   s.i_list,
+	}
+	s.InsertSnapshot(snap)
+	return snap
+}
+
+func (s *StorageEngine) InsertSnapshot(snap *Snapshot) {
+	atomic.AddInt64(&snap.refcount, 1)
+	s.s_list.InsertConcurrentV2(RawPointer(snap))
+}
+
+func (s *StorageEngine) GetSnapshot(snap_id int64) *Snapshot {
+	node := s.s_list.GetConcurrent(snap_id)
+	if node == nil {
+		log.Println("entry not found for snapshot id:", snap_id)
+	}
+	return (*Snapshot)(node.datap)
+}
+
+func (s *StorageEngine) DeleteSnapshot(snap *Snapshot) {
+	if atomic.AddInt64(&snap.refcount, -1) == 0 {
+		s.s_list.DeleteConcurrent(RawPointer(snap))
+	}
+}
+
+func (s *StorageEngine) VisitSnapshots() {
+	it := s.s_list.NewIterator()
+	log.Println("scanning snapshots:")
+	for it.NextMutable(); it.isValid(); it.NextMutable() {
+		snap := *(*Snapshot)(it.GetData())
+		log.Println("visited snapshot id:", snap.version)
+	}
+}
+
+func (s *StorageEngine) InsertKey(val int64) {
+	curr_vers := s.GetVersion()
+	item := AllocateItem(val, curr_vers)
+	s.i_list.InsertConcurrentV2(RawPointer(item))
+	if dbg_engine {
+		log.Println("inserted item key:", item, item.GetItemValue())
+	}
+}
+
+func (s *StorageEngine) DeleteKey(val int64) {
+	curr_vers := s.GetVersion()
+	node := s.i_list.GetConcurrent(val)
+	item := (*Item)(node.datap)
+	item_meta := item.GetItemMetaInfo()
+	item.DeleteItem(curr_vers)
+	// No older shapshots are currently referring this item
+	if item_meta.born_vers == curr_vers {
+		s.i_list.DeleteConcurrent(RawPointer(item))
+	}
+	if dbg_engine {
+		log.Println("deleted item key:", item)
+	}
+}
+
+func (s *StorageEngine) VisitItems() {
+	it := s.i_list.NewIterator()
+	log.Println("scanning items:")
+	for it.NextMutable(); it.isValid(); it.NextMutable() {
+		item := *(*Item)(it.GetData())
+		log.Println("visited key:", item.GetItemValue())
+	}
+}

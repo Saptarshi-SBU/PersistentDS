@@ -237,6 +237,25 @@ retry:
 	return found
 }
 
+func (s *Skiplist) GetConcurrent(key int64) *Node {
+	level := s.level
+	pred := make([](*Node), level+1)
+	succ := make([](*Node), level+1)
+retry:
+	found := s.FindPathV3((int)(key), 0, pred, succ)
+	if found {
+		next, deleted := pred[0].GetNext(0)
+		if !deleted {
+			if key == *(*int64)(next.Item()) {
+				return next
+			} else {
+				goto retry
+			}
+		}
+	}
+	return (*Node)(nil)
+}
+
 func (s *Skiplist) InsertConcurrentV1(ptr RawPointer) {
 	level := s.GetNewLevel()
 	key := *(*int)(ptr)
