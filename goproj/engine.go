@@ -3,8 +3,15 @@
 package goproj
 
 import (
+	"bufio"
+	"encoding/binary"
+	"hash/crc32"
+	"io"
 	"log"
+	"os"
+	"strconv"
 	"sync/atomic"
+	"unsafe"
 )
 
 var dbg_engine bool = false
@@ -16,6 +23,22 @@ type StorageEngine struct {
 	gc_channel   chan int64
 }
 
+type IOWriter struct {
+	file *os.File
+	w    *bufio.Writer
+}
+
+type IOReader struct {
+	file *os.File
+	r    *bufio.Reader
+}
+
+// disk item meta data
+type item_hdr struct {
+	crc uint32
+	len uint32
+}
+
 func InitializeStorageEngine() *StorageEngine {
 	s := &StorageEngine{
 		i_list:       NewSkiplist(4),
@@ -25,6 +48,36 @@ func InitializeStorageEngine() *StorageEngine {
 	}
 	go gcWorker(s)
 	return s
+}
+
+func ShutdownStorageEngine(s *StorageEngine) {
+	s.gc_channel = nil
+	s.s_list = nil
+	s.i_list = nil
+}
+
+func NewWriter(filename string) *IOWriter {
+	file, err := os.Create(filename)
+	if err != nil {
+		panic("error opening db file:")
+	}
+	rw := &IOWriter{
+		file: file,
+		w:    bufio.NewWriter(file),
+	}
+	return rw
+}
+
+func NewReader(filename string) *IOReader {
+	file, err := os.Open(filename)
+	if err != nil {
+		panic("error opening db file:")
+	}
+	rw := &IOReader{
+		file: file,
+		r:    bufio.NewReader(file),
+	}
+	return rw
 }
 
 func (s *StorageEngine) GetVersion() int64 {
@@ -63,6 +116,80 @@ func (s *StorageEngine) DeleteSnapshot(snap *Snapshot) {
 	}
 }
 
+func (s *StorageEngine) SaveSnapshot(snap *Snapshot) {
+	cb := 0
+	it := s.i_list.NewIterator()
+	log.Println("saving snapshot version:", snap.version)
+	rw := NewWriter("db" + "-" + "snap" + strconv.Itoa((int)(snap.version)) + ".dump")
+	for it.Next(); it.isValid(); it.Next() {
+		item := (*Item)(it.GetData())
+		meta := item.GetItemMetaInfo()
+		if meta.born_vers <= snap.version && meta.dead_vers > snap.version {
+			val := item.GetItemValue()
+			// write header
+			hdr := item_hdr{crc: 0, len: 0}
+			hdr.len = (uint32)(unsafe.Sizeof(val))
+			total_bytes := (uint32)(unsafe.Sizeof(hdr)) + hdr.len
+			buf := make([]byte, total_bytes)
+			binary.BigEndian.PutUint32(buf[4:8], hdr.len)
+			binary.BigEndian.PutUint64(buf[8:total_bytes], (uint64)(val))
+			hdr.crc = crc32.ChecksumIEEE(buf[8:total_bytes])
+			binary.BigEndian.PutUint32(buf[0:4], hdr.crc)
+			nn, err := rw.w.Write(buf)
+			if err != nil {
+				panic("error writing item!!!")
+			}
+			log.Println("serialized item to disk:", val)
+			if dbg_engine {
+				log.Println("bytes:", nn, "crc:", hdr.crc, "nlength:", hdr.len)
+			}
+			cb = cb + nn
+		}
+	}
+	log.Println("total bytes written to disk:", cb)
+	rw.w.Flush()
+}
+
+func (s *StorageEngine) LoadSnapshot(snap_version int64) {
+	cb := 0
+	rw := NewReader("db" + "-" + "snap" + strconv.Itoa((int)(snap_version)) + ".dump")
+	hdr := item_hdr{crc: 0, len: 0}
+	hdr_buf := make([]byte, unsafe.Sizeof(hdr))
+	for {
+		var hdr item_hdr
+		nn, err := io.ReadFull(rw.r, hdr_buf)
+		if nn == 0 {
+			break
+		}
+		if (err != nil) || (nn != len(hdr_buf)) {
+			log.Println("error reading item header!!!")
+			break
+		}
+		cb = cb + nn
+		hdr.crc = binary.BigEndian.Uint32(hdr_buf[0:4])
+		hdr.len = binary.BigEndian.Uint32(hdr_buf[4:8])
+		if dbg_engine {
+			log.Println("item meta data ", "crc:", hdr.crc, "nlength:", hdr.len)
+		}
+		data_buf := make([]byte, hdr.len)
+		nn, err = io.ReadFull(rw.r, data_buf)
+		if (err != nil) || (nn != len(data_buf)) {
+			log.Println("error reading item data!!!")
+			break
+		}
+		cb = cb + nn
+		val := binary.BigEndian.Uint64(data_buf)
+		crc := crc32.ChecksumIEEE(data_buf)
+		if crc != hdr.crc {
+			log.Println("read data checksum error!!!", crc)
+			break
+		}
+		log.Println("deserialized item from disk:", val)
+		s.InsertKey((int64)(val))
+	}
+	log.Println("total bytes read from disk:", cb)
+}
+
 func (s *StorageEngine) VisitSnapshots() {
 	it := s.s_list.NewIterator()
 	log.Println("scanning snapshots:")
@@ -96,13 +223,16 @@ func (s *StorageEngine) DeleteKey(val int64) {
 	}
 }
 
-func (s *StorageEngine) VisitItems() {
+func (s *StorageEngine) VisitItems() uint64 {
+	var count uint64 = 0
 	it := s.i_list.NewIterator()
 	log.Println("scanning items:")
 	for it.NextMutable(); it.isValid(); it.NextMutable() {
+		count = count + 1
 		item := *(*Item)(it.GetData())
 		log.Println("visited key:", item.GetItemValue())
 	}
+	return count
 }
 
 func gcWorker(s *StorageEngine) {
@@ -134,7 +264,6 @@ func (s *StorageEngine) runGC(snap_key int64) {
 			}
 		}
 		prev = it.GetNode()
-		//log.Println("prev:", prev)
 		//time.Sleep(time.Duration(time.Second))
 	}
 
@@ -154,7 +283,8 @@ func (s *StorageEngine) CheckGCCandidate(item *Item, snap_id int64) bool {
 	found := true
 	meta := item.GetItemMetaInfo()
 	if meta.dead_vers <= snap_id {
-		found = s.s_list.GetRangeConcurrent((int)(meta.born_vers), (int)(meta.dead_vers))
+		found = s.s_list.GetRangeConcurrent((int)(meta.born_vers),
+			(int)(meta.dead_vers))
 	}
 	if dbg_engine {
 		log.Println("item info:", meta, "gc candidate:", !found)

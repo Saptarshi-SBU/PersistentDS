@@ -6,13 +6,13 @@ const MaxInt64 int64 = int64(^uint(0) >> 1)
 
 // our data
 type Item struct {
-	data      int64
-	snap_meta ItemSnapMeta
+	data      int64        `json:"data"`
+	snap_meta ItemSnapMeta `json:"snap_meta"`
 }
 
 type ItemSnapMeta struct {
-	born_vers int64
-	dead_vers int64
+	born_vers int64 `json:"born_vers"`
+	dead_vers int64 `json:"dead_vers"`
 }
 
 // allocates the entry
